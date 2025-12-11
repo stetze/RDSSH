@@ -13,7 +13,7 @@ Made with <a href="https://github.com/microsoft/TemplateStudio">Microsoft Templa
 
 ## A lightweight RDS and SSH client.
 
-<b>
+
 ```
 ## Available on msstore
 <!-- display an HTML-only app badge. Useful when you can't execute JS, such as in Github markdown pages -->
