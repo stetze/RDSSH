@@ -1,0 +1,133 @@
+﻿<Page
+    x:Class="RDSSH.Views.SettingsPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+    xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    xmlns:win="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:helpers="using:RDSSH.Helpers"
+    xmlns:xaml="using:Microsoft.UI.Xaml"
+    xmlns:muxc="using:Microsoft.UI.Xaml.Controls"
+    xmlns:controls="using:CommunityToolkit.WinUI.Controls"
+    xmlns:ui="using:CommunityToolkit.WinUI"
+    xmlns:models="using:RDSSH.Models"
+    mc:Ignorable="d">
+    <Page.Resources>
+        <ResourceDictionary>
+            <ResourceDictionary.MergedDictionaries>
+                <ResourceDictionary Source="ms-appx:///CommunityToolkit.WinUI.Controls.SettingsControls/SettingsExpander/SettingsExpander.xaml" />
+            </ResourceDictionary.MergedDictionaries>
+        </ResourceDictionary>
+    </Page.Resources>
+    <Grid>
+        <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Padding="12">
+            <StackPanel x:Name="ContentArea">
+                <TextBlock x:Uid="Settings_Personalization" Style="{StaticResource BodyStrongTextBlockStyle}" Margin="{StaticResource XSmallTopBottomMargin}" />
+                <controls:SettingsCard x:Name="settingsThemeCard"
+                                       x:Uid="settingsThemeCard"
+                               HeaderIcon="{ui:FontIcon Glyph=&#xE790;}">
+                    <!-- Theme selection: localized ComboBox items. Tag contains the ElementTheme name. -->
+                    <ComboBox x:Name="SettingsThemeComboBox" SelectionChanged="SettingsThemeComboBox_SelectionChanged" MinWidth="280" MinHeight="40">
+                        <ComboBoxItem x:Uid="Settings_Theme_Light" Tag="Light" />
+                        <ComboBoxItem x:Uid="Settings_Theme_Dark" Tag="Dark" />
+                        <ComboBoxItem x:Uid="Settings_Theme_Default" Tag="Default" />
+                    </ComboBox>
+                </controls:SettingsCard>
+                <controls:SettingsCard x:Name="settingsLanguageCard"
+                       x:Uid="settingsLanguageCard"
+               HeaderIcon="{ui:FontIcon Glyph=&#xf2b7;}">
+                    <!-- Language selection in top SettingsCard -->
+                    <ComboBox x:Name="SettingsLanguageComboBox" SelectionChanged="SettingsLanguageComboBox_SelectionChanged" MinWidth="280" MinHeight="40">
+                        <ComboBoxItem x:Uid="Settings_Language_English" Tag="en-US" />
+                        <ComboBoxItem x:Uid="Settings_Language_German" Tag="de-DE" />
+                    </ComboBox>
+                </controls:SettingsCard>
+                <TextBlock x:Uid="Settings_Accounts" Style="{StaticResource BodyStrongTextBlockStyle}" Margin="{StaticResource XSmallTopBottomMargin}" />
+
+                <controls:SettingsExpander Description="Hier können Sie Benutzerkonten hinzufügen, bearbeiten, löschen."
+                           Header="Benutzerkonten"
+                           HeaderIcon="{ui:FontIcon Glyph=}"
+                           ItemsSource="{x:Bind _credentialService.CredentialDataSet}">
+
+                    <!-- Vorlage für die einzelnen Einträge -->
+                    <controls:SettingsExpander.ItemTemplate>
+                        <DataTemplate x:DataType="models:CredentialModel">
+                            <controls:SettingsCard Header="{x:Bind Username}" Description="{x:Bind Domain}">
+                                <StackPanel Orientation="Horizontal">
+                                    <!-- Bearbeiten-Button -->
+                                    <Button Content="Bearbeiten" Click="EditButton_Click" Tag="{x:Bind ID}" Margin="0,0,8,0"/>
+                                    <!-- Löschen-Button -->
+                                    <Button Content="Löschen" Click="DeleteButton_Click" Tag="{x:Bind ID}"/>
+                                </StackPanel>
+                            </controls:SettingsCard>
+                        </DataTemplate>
+                    </controls:SettingsExpander.ItemTemplate>
+                    <controls:SettingsExpander.ItemsHeader>
+                        <muxc:InfoBar Title="Passwörter werden nur während des Speichervorgangs angezeigt. Anschließend können sie nicht mehr eingesehen werden, da sie sicher in der Windows-Anmeldeinformationsverwaltung abgelegt sind."
+                  BorderThickness="0"
+                  CornerRadius="0"
+                  IsIconVisible="True"
+                  IsOpen="True"
+                  Severity="Informational"
+                  Margin="0,10,0,10">
+                        </muxc:InfoBar>
+                    </controls:SettingsExpander.ItemsHeader>
+                    <!-- Fußbereich für das Hinzufügen neuer Einträge -->
+                    <controls:SettingsExpander.ItemsFooter>
+                        <controls:SettingsCard>
+                            <StackPanel>
+                                <!-- Eingabefelder für neuen Benutzer -->
+                                <TextBox x:Name="UsernameTextBox" PlaceholderText="Benutzername" Margin="0,10,0,10" Width="300"/>
+                                <PasswordBox x:Name="PasswordBox" PlaceholderText="Passwort (Optional)" Margin="0,10,0,10" Width="300"/>
+                                <TextBox x:Name="DomainTextBox" PlaceholderText="Domain (Optional)" Margin="0,10,0,10" Width="300" />
+                                <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,20,0,0">
+                                    <!-- Speichern-Button -->
+                                    <Button Content="Speichern" Click="SaveButton_Click" Margin="0,0,8,16"/>
+                                    <!-- Abbrechen-Button -->
+                                    <Button Content="Abbrechen" Click="CancelButton_Click" Margin="0,0,8,16" />
+                                </StackPanel>
+                            </StackPanel>
+                        </controls:SettingsCard>
+                    </controls:SettingsExpander.ItemsFooter>
+                </controls:SettingsExpander>
+
+
+
+                <TextBlock x:Uid="Settings_About" x:Name="Settings_About" Style="{StaticResource BodyStrongTextBlockStyle}" Margin="{StaticResource XSmallTopBottomMargin}" />
+                <controls:SettingsExpander x:Uid="settingsAboutExpander" HeaderIcon="{ui:BitmapIcon Source=ms-appx:///Assets/Square44x44Logo.scale-200.png}">
+                    <!-- Version shown in expander content; bind to ViewModel.Version (number only) -->
+                    <TextBlock win:IsTextSelectionEnabled="True"
+                               Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                               Text="{x:Bind ViewModel.Version, Mode=OneWay}" />
+
+                    <controls:SettingsExpander.Header>
+                        <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                            <TextBlock x:Name="SettingsAboutHeaderText"
+                                       
+                                       VerticalAlignment="Center" />
+                        </StackPanel>
+                    </controls:SettingsExpander.Header>
+                    <controls:SettingsExpander.Items>
+                        <controls:SettingsCard x:Name="settingsCard" x:Uid="Settings_RepoCard" ActionIcon="{ui:FontIcon Glyph=&#xe8c8;}"
+                               Click="OnCardClicked"
+                               Header="Repository klonen"
+                               IsClickEnabled="True">
+                            <TextBlock x:Name="Settings_RepoCommand" x:Uid="Settings_RepoCommand"
+                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                       Text="git clone https://github.com/stetze/RDS-Shadow.git"
+                                       FontFamily="Cascadia Mono"
+                                       VerticalAlignment="Center" />
+                        </controls:SettingsCard>
+                        <controls:SettingsCard HorizontalContentAlignment="Left"
+                                               ContentAlignment="Left">
+                            <StackPanel Margin="-12,0,0,0"
+                                        Orientation="Vertical">
+                                <HyperlinkButton x:Uid="SettingsPage_PrivacyTermsLink" x:Name="SettingsPage_PrivacyTermsLink" Margin="{StaticResource SettingsPageHyperlinkButtonMargin}" />
+                            </StackPanel>
+                        </controls:SettingsCard>
+                    </controls:SettingsExpander.Items>
+                </controls:SettingsExpander>
+            </StackPanel>
+        </ScrollViewer>
+    </Grid>
+</Page>
