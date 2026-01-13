@@ -54,7 +54,6 @@ public sealed class NativeChildHwndHost : Grid, IDisposable
         UpdateBounds();
         return s;
     }
-
     private void OnLoaded(object sender, RoutedEventArgs e)
     {
         Debug.WriteLine("[NativeChildHwndHost] OnLoaded");
@@ -130,6 +129,21 @@ public sealed class NativeChildHwndHost : Grid, IDisposable
         ChildHwndCreated?.Invoke(this, _childHwnd);
     }
 
+    public event EventHandler? BoundsUpdated;
+
+    private bool _boundsUpdateQueued;
+
+    private void RaiseBoundsUpdatedThrottled()
+    {
+        if (_boundsUpdateQueued) return;
+        _boundsUpdateQueued = true;
+
+        DispatcherQueue.TryEnqueue(() =>
+        {
+            _boundsUpdateQueued = false;
+            BoundsUpdated?.Invoke(this, EventArgs.Empty);
+        });
+    }
     private void UpdateBounds()
     {
         if (_childHwnd == IntPtr.Zero)
@@ -170,6 +184,8 @@ public sealed class NativeChildHwndHost : Grid, IDisposable
         int yScreen = origin.Y + yClient;
 
         SetWindowPos(_childHwnd, HWND_TOP, xScreen, yScreen, w, h, SWP_NOACTIVATE | SWP_SHOWWINDOW);
+
+        RaiseBoundsUpdatedThrottled();
 
         Debug.WriteLine($"[NativeChildHwndHost] bounds screen x={xScreen} y={yScreen} w={w} h={h}");
     }

@@ -164,6 +164,14 @@ static void PaintToWindow(RdpSession* s)
     }
 }
 
+extern "C" __declspec(dllexport) void RdpSession_RequestRepaint(void* session)
+{
+    auto s = static_cast<RdpSession*>(session);
+    if (!s) return;
+    PaintToWindow(s);
+}
+
+
 // -------------------------
 // FreeRDP callbacks
 // -------------------------

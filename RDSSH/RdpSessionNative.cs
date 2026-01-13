@@ -21,6 +21,9 @@ namespace RDSSH
         [DllImport(Dll, EntryPoint = "RdpSession_Pump", CallingConvention = CallingConvention.Cdecl)]
         internal static extern int Pump(nint session, int timeoutMs);
 
+        [DllImport("RdpEngine.Native.dll", EntryPoint = "RdpSession_RequestRepaint", CallingConvention = CallingConvention.Cdecl)]
+        public static extern void RequestRepaint(nint session);
+
         [DllImport(Dll, EntryPoint = "RdpSession_GetLastError", CallingConvention = CallingConvention.Cdecl)]
         internal static extern uint GetLastError(nint session);
 

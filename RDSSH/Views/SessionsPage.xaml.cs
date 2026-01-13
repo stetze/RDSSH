@@ -437,6 +437,11 @@ public sealed partial class SessionsPage : Page
             // HWND an Native binden (VOR Connect)
             RdpSessionNative.AttachToHwnd(handle, childHwnd);
 
+            hostControl.BoundsUpdated += (_, __) =>
+            {
+                try { RdpSessionNative.RequestRepaint(handle); } catch { }
+            };
+
             // Connect Ergebnis synchronisieren
             var tcsConnect = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
 
