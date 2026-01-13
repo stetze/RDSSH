@@ -56,6 +56,21 @@ public partial class App : Application
 
     public static UIElement? AppTitlebar { get; set; }
 
+    public static Views.SessionsHostWindow? SessionsWindow { get; private set; }
+
+    public static Views.SessionsHostWindow GetOrCreateSessionsWindow()
+    {
+        if (SessionsWindow == null)
+        {
+            SessionsWindow = new Views.SessionsHostWindow();
+            SessionsWindow.Closed += (_, __) => SessionsWindow = null;
+        }
+
+        SessionsWindow.Activate();
+        SessionsWindow.BringToFront();
+        return SessionsWindow;
+    }
+
     public App()
     {
         InitializeComponent();

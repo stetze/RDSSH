@@ -4,11 +4,9 @@
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
-    xmlns:controls_legacy="using:CommunityToolkit.WinUI.UI.Controls"
-    xmlns:controls="using:CommunityToolkit.WinUI.Controls"
-    xmlns:ui="using:CommunityToolkit.WinUI"
     xmlns:muxc="using:Microsoft.UI.Xaml.Controls"
     xmlns:models="using:RDSSH.Models"
+    xmlns:native="using:RDSSH.Controls"
     mc:Ignorable="d">
 
     <Page.Resources>
@@ -176,6 +174,11 @@
                                           CornerRadius="3"
                                           Click="ViewToggle_Click"
                                           Tag="list">
+                                <ToggleButton.Resources>
+                                    <SolidColorBrush x:Key="ToggleButtonBackgroundChecked" Color="#a8333e"/>
+                                    <SolidColorBrush x:Key="ToggleButtonBackgroundCheckedPointerOver" Color="#F03E51"/>
+                                    <SolidColorBrush x:Key="ToggleButtonBackgroundCheckedPressed" Color="#C50F1F"/>
+                                </ToggleButton.Resources>
                                 <FontIcon Glyph="&#xE8FD;" FontSize="16"/>
                             </ToggleButton>
                             <ToggleButton x:Name="gridViewToggle"
@@ -185,6 +188,11 @@
                                           IsChecked="True"
                                           Click="ViewToggle_Click"
                                           Tag="grid">
+                                <ToggleButton.Resources>
+                                    <SolidColorBrush x:Key="ToggleButtonBackgroundChecked" Color="#a8333e"/>
+                                    <SolidColorBrush x:Key="ToggleButtonBackgroundCheckedPointerOver" Color="#F03E51"/>
+                                    <SolidColorBrush x:Key="ToggleButtonBackgroundCheckedPressed" Color="#C50F1F"/>
+                                </ToggleButton.Resources>
                                 <FontIcon Glyph="&#xE80A;" FontSize="16"/>
                             </ToggleButton>
                         </StackPanel>
@@ -318,28 +326,32 @@
                                 <ColumnDefinition Width="Auto"/>
                             </Grid.ColumnDefinitions>
 
-                            <!-- Protocol Icon -->
+                            <!-- Image / background area only: do not render protocol text here to avoid overlay -->
                             <Border Grid.Column="0"
                                     Width="48" Height="48"
                                     CornerRadius="8"
-                                    Background="{ThemeResource CardBackgroundBrush}">
-                                <TextBlock Text="{x:Bind Protocol}"
-                                           Foreground="{ThemeResource TextFillColorPrimaryBrush}"
-                                           FontSize="11"
-                                           FontWeight="SemiBold"
-                                           HorizontalAlignment="Center"
-                                           VerticalAlignment="Center"/>
-                            </Border>
+                                    Background="{ThemeResource CardBackgroundBrush}" />
 
                             <!-- Connection Info -->
                             <StackPanel Grid.Column="1"
                                         VerticalAlignment="Center"
                                         Spacing="2">
-                                <TextBlock Text="{x:Bind DisplayName}"
-                                           Foreground="{ThemeResource TextFillColorPrimaryBrush}"
-                                           FontWeight="SemiBold"
-                                           FontSize="14"
-                                           TextTrimming="CharacterEllipsis"/>
+                                <!-- Protocol pill moved here so it won't overlap the image -->
+                                <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                                    <Border Background="#33000000" Padding="8,4" CornerRadius="12" VerticalAlignment="Center">
+                                        <TextBlock Text="{x:Bind Protocol}"
+                                                   Foreground="{ThemeResource TextFillColorPrimaryBrush}"
+                                                   FontSize="11"
+                                                   FontWeight="SemiBold"/>
+                                    </Border>
+
+                                    <TextBlock Text="{x:Bind DisplayName}"
+                                               Foreground="{ThemeResource TextFillColorPrimaryBrush}"
+                                               FontWeight="SemiBold"
+                                               FontSize="14"
+                                               TextTrimming="CharacterEllipsis"/>
+                                </StackPanel>
+
                                 <TextBlock Foreground="{ThemeResource TextFillColorSecondaryBrush}"
                                            FontSize="12"
                                            TextTrimming="CharacterEllipsis">

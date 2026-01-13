@@ -5,6 +5,7 @@ using RDSSH.Models;
 using RDSSH.Services;
 using System;
 using System.Linq;
+using System.Threading.Tasks;
 
 namespace RDSSH.Views
 {
@@ -17,10 +18,10 @@ namespace RDSSH.Views
 
         public AddConnectionPage()
         {
-            this.InitializeComponent();
+            InitializeComponent();
             CredentialService = App.GetService<CredentialService>();
             _hostlistService = App.GetService<HostlistService>();
-            this.DataContext = this;
+            DataContext = this;
         }
 
         protected override void OnNavigatedTo(NavigationEventArgs e)
@@ -30,13 +31,26 @@ namespace RDSSH.Views
 
             if (_connectionToEdit != null)
             {
-                // Fülle die Felder mit den Daten der zu bearbeitenden Verbindung
-                ThemeComboBox.SelectedItem = ThemeComboBox.Items.Cast<ComboBoxItem>().FirstOrDefault(item => item.Content.ToString() == _connectionToEdit.Protocol);
+                ThemeComboBox.SelectedItem = ThemeComboBox.Items
+                    .Cast<ComboBoxItem>()
+                    .FirstOrDefault(item => item.Content?.ToString() == _connectionToEdit.Protocol);
+
                 PortTextBox.Text = _connectionToEdit.Port;
                 DisplaynameTextBox.Text = _connectionToEdit.DisplayName;
                 HostnameTextBox.Text = _connectionToEdit.Hostname;
                 DomainTextBox.Text = _connectionToEdit.Domain;
-                CredentialComboBox.SelectedItem = CredentialService.CredentialDataSet.FirstOrDefault(cred => cred.Username == _connectionToEdit.Username);
+
+                CredentialComboBox.SelectedItem = CredentialService.CredentialDataSet
+                    .FirstOrDefault(cred => cred.Username == _connectionToEdit.Username);
+
+                // --- Load advanced values ---
+                IgnoreCertCheckBox.IsChecked = _connectionToEdit.RdpIgnoreCert;
+                TlsLegacyCheckBox.IsChecked = _connectionToEdit.RdpTlsLegacy;
+                DynamicResolutionCheckBox.IsChecked = _connectionToEdit.RdpDynamicResolution;
+                ClipboardCheckBox.IsChecked = _connectionToEdit.RdpClipboard;
+                AdminModeCheckBox.IsChecked = _connectionToEdit.RdpAdminMode;
+                LoadBalanceInfoTextBox.Text = _connectionToEdit.RdpLoadBalanceInfo ?? "";
+                ExtraArgsTextBox.Text = _connectionToEdit.RdpExtraArgs ?? "";
             }
         }
 
@@ -46,66 +60,67 @@ namespace RDSSH.Views
             {
                 if (CredentialComboBox.SelectedItem == null)
                 {
-                    var dialog = new ContentDialog
-                    {
-                        Title = "Fehler",
-                        Content = "Bitte wähle einen Benutzernamen aus.",
-                        CloseButtonText = "OK"
-                    };
-                    await dialog.ShowAsync();
+                    await ShowErrorAsync("Fehler", "Bitte wähle einen Benutzernamen aus.");
                     return;
                 }
 
-                var selectedCredential = (CredentialModel)CredentialComboBox.SelectedItem;
-                var connection = new HostlistModel
+                // Optional: Sicherheitswarnung, wenn IgnoreCert aktiv ist
+                if (IgnoreCertCheckBox.IsChecked == true)
                 {
-                    Protocol = ((ComboBoxItem)ThemeComboBox.SelectedItem).Content.ToString(),
-                    Port = PortTextBox.Text,
-                    DisplayName = DisplaynameTextBox.Text,
-                    Hostname = HostnameTextBox.Text,
-                    Domain = DomainTextBox.Text,
-                    Username = selectedCredential.Username
-                };
+                    var proceed = await ShowWarningAsync(
+                        title: "Sicherheitswarnung",
+                        content: "„Zertifikat ignorieren“ deaktiviert die Server-Identitätsprüfung. Das kann Man-in-the-Middle-Angriffe ermöglichen.\n\nMöchtest du fortfahren?",
+                        proceedText: "Fortfahren",
+                        cancelText: "Abbrechen"
+                    );
 
-                if (_connectionToEdit != null)
-                {
-                    // Aktualisiere die bestehende Verbindung
-                    var index = _hostlistService.Hostlist.IndexOf(_connectionToEdit);
-                    if (index >= 0)
-                    {
-                        _hostlistService.Hostlist[index] = connection;
-                    }
+                    if (!proceed)
+                        return;
                 }
-                else
+
+                var selectedCredential = (CredentialModel)CredentialComboBox.SelectedItem;
+                var protocol = ((ComboBoxItem)ThemeComboBox.SelectedItem)?.Content?.ToString() ?? "RDP";
+
+                HostlistModel target = _connectionToEdit ?? new HostlistModel();
+
+                target.Protocol = protocol;
+                target.Port = (PortTextBox.Text ?? "").Trim();
+                target.DisplayName = (DisplaynameTextBox.Text ?? "").Trim();
+                target.Hostname = (HostnameTextBox.Text ?? "").Trim();
+                target.Domain = (DomainTextBox.Text ?? "").Trim();
+                target.Username = selectedCredential.Username;
+
+                // --- Persist advanced settings ---
+                target.RdpIgnoreCert = IgnoreCertCheckBox.IsChecked == true;
+                target.RdpTlsLegacy = TlsLegacyCheckBox.IsChecked == true;
+                target.RdpDynamicResolution = DynamicResolutionCheckBox.IsChecked == true;
+                target.RdpClipboard = ClipboardCheckBox.IsChecked == true;
+                target.RdpAdminMode = AdminModeCheckBox.IsChecked == true;
+                target.RdpLoadBalanceInfo = (LoadBalanceInfoTextBox.Text ?? "").Trim();
+                target.RdpExtraArgs = (ExtraArgsTextBox.Text ?? "").Trim();
+
+                if (_connectionToEdit == null)
                 {
-                    // Füge eine neue Verbindung hinzu
-                    _hostlistService.AddConnection(connection);
+                    _hostlistService.AddConnection(target);
                 }
 
                 await _hostlistService.SaveConnectionsAsync();
                 System.Diagnostics.Debug.WriteLine("Connection saved successfully.");
-                this.Frame.Navigate(typeof(SessionsPage));
+                Frame.Navigate(typeof(SessionsPage));
             }
             catch (Exception ex)
             {
-                var dialog = new ContentDialog
-                {
-                    Title = "Fehler",
-                    Content = $"Ein Fehler ist aufgetreten: {ex.Message}",
-                    CloseButtonText = "OK"
-                };
-                await dialog.ShowAsync();
-                System.Diagnostics.Debug.WriteLine($"Error: {ex.Message}");
+                await ShowErrorAsync("Fehler", $"Ein Fehler ist aufgetreten: {ex.Message}");
+                System.Diagnostics.Debug.WriteLine($"Error: {ex}");
             }
         }
-
 
 
         private void ThemeComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
         {
             if (ThemeComboBox.SelectedItem is ComboBoxItem selectedItem)
             {
-                switch (selectedItem.Content.ToString())
+                switch (selectedItem.Content?.ToString())
                 {
                     case "RDP":
                         PortTextBox.Text = "3389";
@@ -121,8 +136,33 @@ namespace RDSSH.Views
         }
 
         private void BackButton_Click(object sender, RoutedEventArgs e)
+            => Frame.Navigate(typeof(SessionsPage));
+
+        private async Task ShowErrorAsync(string title, string content)
         {
-            this.Frame.Navigate(typeof(SessionsPage));
+            var dialog = new ContentDialog
+            {
+                Title = title,
+                Content = content,
+                CloseButtonText = "OK",
+                XamlRoot = this.XamlRoot
+            };
+            await dialog.ShowAsync();
+        }
+
+        private async Task<bool> ShowWarningAsync(string title, string content, string proceedText, string cancelText)
+        {
+            var dialog = new ContentDialog
+            {
+                Title = title,
+                Content = content,
+                PrimaryButtonText = proceedText,
+                CloseButtonText = cancelText,
+                XamlRoot = this.XamlRoot
+            };
+
+            var res = await dialog.ShowAsync();
+            return res == ContentDialogResult.Primary;
         }
     }
 }

@@ -219,7 +219,6 @@ public sealed partial class SettingsPage : Page
         }
         catch { }
     }
-
     private void SettingsPage_Loaded(object sender, RoutedEventArgs e)
     {
         _suppressLanguageSelectionChanged = true;

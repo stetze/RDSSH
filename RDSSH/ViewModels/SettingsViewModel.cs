@@ -48,6 +48,36 @@ public partial class SettingsViewModel : ObservableRecipient
         set => SetProperty(ref _askForClientName, value);
     }
 
+    public string FreeRdpVersion { get; } = GetFreeRdpVersion();
+    public string FreeRdpRuntimeSummary { get; } =
+    Environment.Is64BitProcess ? "x64 · OpenSSL 3 · zlib" : "x86 · OpenSSL 3 · zlib";
+
+    private static string GetFreeRdpVersion()
+    {
+        try
+        {
+            var v = FreeRdpNative.RdpEngine_Version();
+            // 32000 -> 3.20.0 (bei Ihrem Output)
+            var major = v / 10000;
+            var minor = (v / 100) % 100;
+            var rev = v % 100;
+            return $"{major}.{minor}.{rev} ({v})";
+        }
+        catch (DllNotFoundException)
+        {
+            return "Nicht verfügbar (Native DLL fehlt im Paket)";
+        }
+        catch (BadImageFormatException)
+        {
+            return "Nicht verfügbar (x64/x86 passt nicht)";
+        }
+        catch (Exception ex)
+        {
+            return $"Nicht verfügbar ({ex.GetType().Name})";
+        }
+    }
+
+
     public ICommand SwitchThemeCommand
     {
         get;

@@ -369,4 +369,132 @@
   <data name="Sessions_Context_SendMessage.Text" xml:space="preserve">
     <value>Nachricht senden</value>
   </data>
+    <!-- AddConnectionPage -->
+  <data name="AddConnection_Title.Text" xml:space="preserve">
+    <value>Verbindung</value>
+  </data>
+
+  <data name="AddConnection_Back.Label" xml:space="preserve">
+    <value>Zurück</value>
+  </data>
+
+  <data name="AddConnection_ProtocolLabel.Text" xml:space="preserve">
+    <value>Protokoll</value>
+  </data>
+
+  <data name="AddConnection_PortLabel.Text" xml:space="preserve">
+    <value>Port</value>
+  </data>
+
+  <data name="AddConnection_Port.PlaceholderText" xml:space="preserve">
+    <value>3389</value>
+  </data>
+
+  <data name="AddConnection_DisplayNameLabel.Text" xml:space="preserve">
+    <value>Anzeigename</value>
+  </data>
+
+  <data name="AddConnection_DisplayName.PlaceholderText" xml:space="preserve">
+    <value>(Optional)</value>
+  </data>
+
+  <data name="AddConnection_HostLabel.Text" xml:space="preserve">
+    <value>Hostname</value>
+  </data>
+
+  <data name="AddConnection_Host.PlaceholderText" xml:space="preserve">
+    <value>Hostname oder IP-Adresse</value>
+  </data>
+
+  <data name="AddConnection_DomainLabel.Text" xml:space="preserve">
+    <value>Domain</value>
+  </data>
+
+  <data name="AddConnection_Domain.PlaceholderText" xml:space="preserve">
+    <value>(Optional)</value>
+  </data>
+
+  <data name="AddConnection_UsernameLabel.Text" xml:space="preserve">
+    <value>Benutzername</value>
+  </data>
+
+  <data name="AddConnection_Advanced.Header" xml:space="preserve">
+    <value>Erweiterte Einstellungen</value>
+  </data>
+
+  <data name="AddConnection_Advanced_Security.Text" xml:space="preserve">
+    <value>Sicherheit</value>
+  </data>
+
+  <data name="AddConnection_IgnoreCert.Content" xml:space="preserve">
+    <value>Zertifikat ignorieren (/cert:ignore)</value>
+  </data>
+
+  <data name="AddConnection_TlsLegacy.Content" xml:space="preserve">
+    <value>Legacy TLS erlauben (/tls-seclevel:0)</value>
+  </data>
+
+  <data name="AddConnection_Advanced_Display.Text" xml:space="preserve">
+    <value>Anzeige</value>
+  </data>
+
+  <data name="AddConnection_DynamicResolution.Content" xml:space="preserve">
+    <value>Dynamische Auflösung (/dynamic-resolution)</value>
+  </data>
+
+  <data name="AddConnection_Advanced_Comfort.Text" xml:space="preserve">
+    <value>Komfort</value>
+  </data>
+
+  <data name="AddConnection_Clipboard.Content" xml:space="preserve">
+    <value>Zwischenablage (/clipboard)</value>
+  </data>
+
+  <data name="AddConnection_Advanced_Advanced.Text" xml:space="preserve">
+    <value>Erweitert</value>
+  </data>
+
+  <data name="AddConnection_AdminMode.Content" xml:space="preserve">
+    <value>Mit Administratormodus verbinden (/admin)</value>
+  </data>
+
+  <data name="AddConnection_LoadBalanceInfoLabel.Text" xml:space="preserve">
+    <value>LoadBalanceInfo</value>
+  </data>
+
+  <data name="AddConnection_LoadBalanceInfo.PlaceholderText" xml:space="preserve">
+    <value>(Optional) tsv://...</value>
+  </data>
+
+  <data name="AddConnection_SaveButton.Content" xml:space="preserve">
+    <value>Speichern</value>
+  </data>
+
+  <!-- Dialogs / Errors -->
+  <data name="AddConnection_ErrorTitle" xml:space="preserve">
+    <value>Fehler</value>
+  </data>
+
+  <data name="AddConnection_Error_SelectUsername" xml:space="preserve">
+    <value>Bitte wähle einen Benutzernamen aus.</value>
+  </data>
+
+  <data name="AddConnection_SecurityWarning_Title" xml:space="preserve">
+    <value>Sicherheitswarnung</value>
+  </data>
+
+  <data name="AddConnection_SecurityWarning_Content" xml:space="preserve">
+    <value>„Zertifikat ignorieren“ deaktiviert die Server-Identitätsprüfung. Das erhöht das Risiko für Man-in-the-Middle-Angriffe. Nur aktivieren, wenn Sie dem Zielserver und dem Netzwerk vertrauen.
+
+Möchten Sie fortfahren?</value>
+  </data>
+
+  <data name="AddConnection_SecurityWarning_Proceed" xml:space="preserve">
+    <value>Fortfahren</value>
+  </data>
+
+  <data name="AddConnection_SecurityWarning_Cancel" xml:space="preserve">
+    <value>Abbrechen</value>
+  </data>
+
 </root>

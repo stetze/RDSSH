@@ -1,5 +1,4 @@
-﻿using ColorCode.Compilation.Languages;
-using CommunityToolkit.WinUI.UI.Controls;
+﻿using CommunityToolkit.WinUI;
 using Meziantou.Framework.Win32; // Importiere Meziantou.Framework.Win32
 using Microsoft.Data.SqlClient;
 using Microsoft.UI.Xaml;
@@ -8,10 +7,12 @@ using Microsoft.UI.Xaml.Controls.Primitives;
 using Microsoft.UI.Xaml.Data;
 using Microsoft.UI.Xaml.Input;
 using RDSSH.Contracts.Services;
+using RDSSH.Controls;
 using RDSSH.Helpers; // for GetLocalized()
 using RDSSH.Models;
 using RDSSH.Services;
 using RDSSH.ViewModels;
+using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Data;
@@ -26,6 +27,7 @@ using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using Windows.Globalization;
+using CTStrings = CommunityToolkit.WinUI.StringExtensions;
 
 namespace RDSSH.Views;
 
@@ -46,10 +48,9 @@ public sealed partial class SessionsPage : Page
     // Class-level helper to provide localization with fallback
     private static string LocalizedOrDefault(string key, string deDefault, string enDefault)
     {
-        var val = key.GetLocalized();
+        var val = CTStrings.GetLocalized(key);
         if (val == key)
         {
-            // Prefer ApplicationLanguages.PrimaryLanguageOverride when set
             try
             {
                 var overrideLang = ApplicationLanguages.PrimaryLanguageOverride;
@@ -68,6 +69,7 @@ public sealed partial class SessionsPage : Page
         return val;
     }
 
+
     public SessionsPage()
     {
         ViewModel = App.GetService<SessionsViewModel>();
@@ -78,16 +80,26 @@ public sealed partial class SessionsPage : Page
 
         // Note: We don't bind directly here anymore, ApplyFilter will handle it
         // This prevents the binding from being overwritten
-        
+
         // Wire localization change
         _localization_service_subscribe();
 
         // Set UI texts (use localization with fallback)
-        try { tbSearch.PlaceholderText = "Sessions_FilterTextBox.PlaceholderText".GetLocalized(); } catch { }
+        try { tbSearch.PlaceholderText = CTStrings.GetLocalized("Sessions_FilterTextBox.PlaceholderText"); } catch { }
+
 
         // Ensure the list is populated automatically when the page is first shown
         Loaded += SessionsPage_Loaded;
     }
+
+    private sealed class ActiveRdpSession
+    {
+        public nint Handle;
+        public CancellationTokenSource Cts = new();
+        public Task? Worker;
+    }
+
+    private readonly Dictionary<HostlistModel, ActiveRdpSession> _activeRdp = new();
 
     private void DevicesAddButton_Click(object sender, RoutedEventArgs e)
     {
@@ -160,11 +172,11 @@ public sealed partial class SessionsPage : Page
                 {
                     Debug.WriteLine($"Error showing MenuFlyout: {ex.Message}");
                     // fallback: show at window content if it's a FrameworkElement
-                    try 
-                    { 
+                    try
+                    {
                         var hostFe = App.MainWindow.Content as FrameworkElement;
                         if (hostFe != null) menuFlyout.ShowAt(hostFe);
-                    } 
+                    }
                     catch { }
                 }
 
@@ -178,10 +190,7 @@ public sealed partial class SessionsPage : Page
     }
 
     private void EditConnection(HostlistModel connection)
-    {
-        // Logik zum Bearbeiten der Verbindung und Navigieren zur AddConnectionPage
-        Frame.Navigate(typeof(AddConnectionPage), connection);
-    }
+        => Frame.Navigate(typeof(AddConnectionPage), connection);
 
     private async void DeleteConnection(HostlistModel connection)
     {
@@ -202,80 +211,114 @@ public sealed partial class SessionsPage : Page
 
     private void ConnectionsListView_DoubleTapped(object sender, DoubleTappedRoutedEventArgs e)
     {
-        var listView = sender as ListView;
-        HostlistModel item = null;
+        HostlistModel? item = null;
 
         try
         {
             Debug.WriteLine($"DoubleTapped OriginalSource type: {e.OriginalSource?.GetType().FullName}");
 
-            // Prefer SelectedItem (covers keyboard and mouse selection scenarios)
-            item = listView?.SelectedItem as HostlistModel;
+            // 1) Prefer SelectedItem (works for both ListView and GridView)
+            if (sender is ListView lv)
+            {
+                item = lv.SelectedItem as HostlistModel;
+            }
+            else if (sender is GridView gv)
+            {
+                item = gv.SelectedItem as HostlistModel;
+            }
+
             Debug.WriteLine($"SelectedItem resolved: {(item != null ? item.DisplayName : "<null>")}");
 
-            // Fallback: walk up the visual tree from OriginalSource to find the ListViewItem
+            // 2) Fallback: walk up the visual tree to find the item container
             if (item == null)
             {
                 var dep = e.OriginalSource as DependencyObject;
-                while (dep != null && !(dep is ListViewItem))
-                {
-                    dep = Microsoft.UI.Xaml.Media.VisualTreeHelper.GetParent(dep);
-                }
 
-                if (dep is ListViewItem lvi)
+                // First try ListViewItem
+                var probe = dep;
+                while (probe != null && probe is not ListViewItem)
+                {
+                    probe = Microsoft.UI.Xaml.Media.VisualTreeHelper.GetParent(probe);
+                }
+                if (probe is ListViewItem lvi)
                 {
                     item = lvi.Content as HostlistModel;
                     Debug.WriteLine($"Resolved via ListViewItem: {(item != null ? item.DisplayName : "<null>")}");
                 }
-                else
+
+                // Then try GridViewItem
+                if (item == null)
                 {
-                    // Last resort: try DataContext of the OriginalSource if it's a FrameworkElement
-                    if (e.OriginalSource is FrameworkElement fe)
+                    probe = dep;
+                    while (probe != null && probe is not GridViewItem)
                     {
-                        item = fe.DataContext as HostlistModel;
-                        Debug.WriteLine($"Resolved via OriginalSource.DataContext: {(item != null ? item.DisplayName : "<null>")}");
+                        probe = Microsoft.UI.Xaml.Media.VisualTreeHelper.GetParent(probe);
                     }
+                    if (probe is GridViewItem gvi)
+                    {
+                        item = gvi.Content as HostlistModel;
+                        Debug.WriteLine($"Resolved via GridViewItem: {(item != null ? item.DisplayName : "<null>")}");
+                    }
+                }
+
+                // 3) Last resort: DataContext of OriginalSource
+                if (item == null && e.OriginalSource is FrameworkElement fe)
+                {
+                    item = fe.DataContext as HostlistModel;
+                    Debug.WriteLine($"Resolved via OriginalSource.DataContext: {(item != null ? item.DisplayName : "<null>")}");
                 }
             }
 
-            if (item != null)
+            // 4) Guard: abort if still null
+            if (item == null)
             {
-                Debug.WriteLine($"Starting connection for: {item.DisplayName} protocol={item.Protocol}");
-                if (string.Equals(item.Protocol, "RDP", StringComparison.OrdinalIgnoreCase))
-                {
-                    StartRDPConnection(item);
-                }
-                else if (string.Equals(item.Protocol, "SSH", StringComparison.OrdinalIgnoreCase))
-                {
-                    StartSSHConnection(item);
-                }
-                else
-                {
-                    Debug.WriteLine($"Unknown protocol: {item.Protocol}");
-                }
+                Debug.WriteLine("DoubleTapped: item null -> abort");
+                return;
+            }
+
+            // Execute single-click behavior first (selection/details/etc.)
+            OnItemSingleClick(item);
+
+            // Then start the connection only on double-click
+            Debug.WriteLine($"Starting connection for: {item.DisplayName} protocol={item.Protocol}");
+
+            if (string.Equals(item.Protocol, "RDP", StringComparison.OrdinalIgnoreCase))
+            {
+                StartRDPConnection(item);
+            }
+            else if (string.Equals(item.Protocol, "SSH", StringComparison.OrdinalIgnoreCase))
+            {
+                StartSSHConnection(item);
             }
             else
             {
-                Debug.WriteLine("ConnectionsListView_DoubleTapped: could not resolve HostlistModel for clicked row.");
+                Debug.WriteLine($"Unknown protocol: {item.Protocol}");
             }
         }
         catch (Exception ex)
         {
-            Debug.WriteLine($"ConnectionsListView_DoubleTapped error: {ex.Message}");
+            Debug.WriteLine($"ConnectionsListView_DoubleTapped error: {ex}");
         }
+    }
+
+
+    // Extracted single-click actions here. This will NOT start connections.
+    private void OnItemSingleClick(HostlistModel item)
+    {
+        if (item == null) return;
+        Debug.WriteLine($"Item single-clicked: {item.DisplayName} protocol={item.Protocol}");
     }
 
     private void StartSSHConnection(HostlistModel connection)
     {
         try
         {
-            connection.IsConnected = true; // Setze den Status auf verbunden
+            connection.IsConnected = true;
 
             string serverAddress = connection.Hostname;
             string username = connection.Username;
             string port = connection.Port;
 
-            // Baue den SSH-Befehl zusammen
             string sshCommand = $"ssh {username}@{serverAddress} -p {port}";
 
             var startInfo = new ProcessStartInfo
@@ -287,7 +330,7 @@ public sealed partial class SessionsPage : Page
 
             Process.Start(startInfo);
 
-            connection.IsConnected = false; // Setze den Status auf nicht verbunden, wenn die Verbindung geschlossen ist
+            connection.IsConnected = false;
         }
         catch (Exception ex)
         {
@@ -296,100 +339,220 @@ public sealed partial class SessionsPage : Page
         }
     }
 
+    private static string BuildFreeRdpArgs(HostlistModel c)
+    {
+        var args = new StringBuilder();
+
+        if (c.RdpDynamicResolution) args.Append("/dynamic-resolution ");
+        if (c.RdpClipboard) args.Append("/clipboard ");
+
+        // NICHT default:
+        if (c.RdpIgnoreCert) args.Append("/cert:ignore ");
+        if (c.RdpTlsLegacy) args.Append("/tls-seclevel:0 ");
+        if (c.RdpAdminMode) args.Append("/admin ");
+
+        if (!string.IsNullOrWhiteSpace(c.RdpLoadBalanceInfo))
+            args.Append("/load-balance-info:").Append(c.RdpLoadBalanceInfo.Trim()).Append(' ');
+
+        if (!string.IsNullOrWhiteSpace(c.RdpExtraArgs))
+            args.Append(c.RdpExtraArgs.Trim()).Append(' ');
+
+        return args.ToString().Trim();
+    }
+
     private async void StartRDPConnection(HostlistModel connection)
     {
+        RdpSessionNative.LogRuntimeVersions();
+
         try
         {
-            connection.IsConnected = true; // Setze den Status auf verbunden
-
-            string serverAddress = connection.Hostname;
-            string username = connection.Username;
-            string domain = connection.Domain; // Füge die Domain aus der Hostlist hinzu
-
-            // Lese die Anmeldedaten aus dem Credential Manager mit dem Präfix "RDSSH-Launcher\\"
-            var credential = CredentialManager.ReadCredential("RDSSH\\" + username);
-
-            // Erstelle einen SecureString für das Passwort
-            SecureString securePassword = new SecureString();
-            foreach (char c in credential.Password)
+            // Toggle: Wenn schon aktiv -> disconnect
+            if (_activeRdp.TryGetValue(connection, out var existing))
             {
-                securePassword.AppendChar(c);
+                Debug.WriteLine("StartRDPConnection: already connected -> disconnect");
+                await StopRdpSessionAsync(connection, existing);
+                return;
             }
-            securePassword.MakeReadOnly();
 
-            // Speichere die Anmeldedaten temporär als Generic Credential
-            string tempCredentialName = $"TERMSRV/{serverAddress}.{domain}";
-            CredentialManager.WriteCredential(tempCredentialName, $"{domain}\\{username}", credential.Password, domain, CredentialPersistence.Session, CredentialType.Generic);
+            connection.IsConnected = true;
 
-            // Verwende sdl-freerdp direkt mit ProcessStartInfo
-            string freerdpPath = Path.Combine(AppContext.BaseDirectory, "FreeRDP", "sdl3-freerdp.exe");
+            var host = (connection.Hostname ?? "").Trim();
+            var username = (connection.Username ?? "").Trim();
+            var domain = (connection.Domain ?? "").Trim();
 
-            if (File.Exists(freerdpPath))
+            int port = 3389;
+            if (!string.IsNullOrWhiteSpace(connection.Port) &&
+                int.TryParse(connection.Port, out var p) &&
+                p > 0)
             {
-                var startInfo = new ProcessStartInfo
+                port = p;
+            }
+
+            if (string.IsNullOrWhiteSpace(host) || string.IsNullOrWhiteSpace(username))
+            {
+                Debug.WriteLine("StartRDPConnection: Host oder Username fehlt.");
+                connection.IsConnected = false;
+                return;
+            }
+
+            // Credential Manager
+            var credKey = "RDSSH\\" + username;
+            var cred = CredentialManager.ReadCredential(credKey);
+            if (cred == null)
+            {
+                Debug.WriteLine($"StartRDPConnection: Credential nicht gefunden: {credKey}");
+                connection.IsConnected = false;
+                return;
+            }
+
+            var freerdpArgs = BuildFreeRdpArgs(connection);
+            var dynamicResolution = connection.RdpDynamicResolution ? 1 : 0;
+
+            int width = 1280;
+            int height = 720;
+
+            // --- SessionsHostWindow holen + in Vordergrund bringen + Tab erstellen ---
+            var sessionsWindow = App.GetOrCreateSessionsWindow();
+            sessionsWindow.BringToFront();
+
+            var hostControl = sessionsWindow.AddRdpTab($"RDP: {connection.DisplayName}");
+
+            // WICHTIG: erst warten bis Child-HWND existiert
+            var childHwnd = await hostControl.WaitForChildHwndAsync();
+            Debug.WriteLine($"StartRDPConnection: got childHwnd=0x{childHwnd:X}");
+
+            // Session erstellen
+            var handle = RdpSessionNative.Create();
+            if (handle == 0)
+            {
+                Debug.WriteLine("StartRDPConnection: RdpSessionNative.Create failed");
+                connection.IsConnected = false;
+                return;
+            }
+
+            // Session registrieren (damit Stop/Toggle funktioniert)
+            var session = new ActiveRdpSession { Handle = handle };
+            _activeRdp[connection] = session;
+
+            // HWND an Native binden (VOR Connect)
+            RdpSessionNative.AttachToHwnd(handle, childHwnd);
+
+            // Connect Ergebnis synchronisieren
+            var tcsConnect = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
+
+            session.Worker = Task.Run(() =>
+            {
+                int rc = -999;
+
+                try
                 {
-                    FileName = freerdpPath,
-                    Arguments = "/args-from:stdin",
-                    UseShellExecute = false,
-                    RedirectStandardInput = true,
-                    RedirectStandardOutput = true,
-                    RedirectStandardError = true,
-                    CreateNoWindow = true
-                };
+                    Debug.WriteLine($"RDP worker: connecting host='{host}' port={port} user='{username}' domain='{domain}' args='{freerdpArgs}'");
 
-                var process = new Process
-                {
-                    StartInfo = startInfo
-                };
+                    rc = RdpSessionNative.Connect(
+                        handle,
+                        host,
+                        port,
+                        username,
+                        domain,
+                        cred.Password,
+                        width,
+                        height,
+                        dynamicResolution,
+                        freerdpArgs
+                    );
 
-                process.OutputDataReceived += (sender, args) => Debug.WriteLine(args.Data);
-                process.ErrorDataReceived += (sender, args) => Debug.WriteLine(args.Data);
+                    tcsConnect.TrySetResult(rc);
 
-                process.Start();
-                process.BeginOutputReadLine();
-                process.BeginErrorReadLine();
+                    if (rc != 0)
+                        return;
 
-                // Schreibe die Argumente in stdin
-                using (var writer = process.StandardInput)
-                {
-                    if (writer.BaseStream.CanWrite)
+                    var sw = Stopwatch.StartNew();
+                    while (!session.Cts.IsCancellationRequested)
                     {
-                        writer.WriteLine($"/v:{serverAddress}.{domain}");
-                        writer.WriteLine($"/u:{username}");
-                        writer.WriteLine($"/d:{domain}");
-                        writer.WriteLine("/cert:ignore");
-                        writer.WriteLine("/dynamic-resolution");
-                        writer.WriteLine("/clipboard");
-                        writer.WriteLine($"/p:{new NetworkCredential(string.Empty, securePassword).Password}");
+                        int prc = RdpSessionNative.Pump(handle, 100);
+
+                        if (sw.ElapsedMilliseconds > 2000)
+                        {
+                            Debug.WriteLine($"RDP worker: pump alive prc={prc}");
+                            sw.Restart();
+                        }
+
+                        if (prc < 0)
+                        {
+                            Debug.WriteLine($"RDP worker: pump ended prc={prc} lastErr=0x{RdpSessionNative.GetLastError(handle):X8}");
+                            break;
+                        }
                     }
                 }
-                // Debugging-Ausgabe des Window Handles
-                Debug.WriteLine($"Window Handle: {process.MainWindowHandle}");
+                catch (Exception ex)
+                {
+                    tcsConnect.TrySetResult(rc);
+                    Debug.WriteLine($"RDP worker exception: {ex}");
+                }
+                finally
+                {
+                    try { RdpSessionNative.Disconnect(handle); } catch { }
+                    try { RdpSessionNative.Destroy(handle); } catch { }
+                }
+            });
 
-                await process.WaitForExitAsync();
+            int connectRc = await tcsConnect.Task;
 
-                // Lösche die temporären Anmeldedaten nach der Verwendung
-                CredentialManager.DeleteCredential(tempCredentialName);
-
-                connection.IsConnected = false; // Setze den Status auf nicht verbunden, wenn die Verbindung geschlossen ist
-            }
-            else
+            if (connectRc != 0)
             {
-                Debug.WriteLine($"Die Datei {freerdpPath} wurde nicht gefunden.");
+                uint lastErr = 0;
+                var sb = new StringBuilder(256);
+
+                try
+                {
+                    lastErr = RdpSessionNative.GetLastError(handle);
+                    RdpSessionNative.GetLastErrorString(handle, sb, sb.Capacity);
+                }
+                catch (Exception ex)
+                {
+                    Debug.WriteLine($"GetLastError/GetLastErrorString failed: {ex}");
+                }
+
+                Debug.WriteLine($"RdpSessionNative.Connect rc={connectRc} lastErr=0x{lastErr:X8} {sb}");
+
+                _activeRdp.Remove(connection);
+                connection.IsConnected = false;
+                return;
             }
+
+            Debug.WriteLine("RdpSessionNative.Connect rc=0 (Success).");
         }
         catch (Exception ex)
         {
-            Debug.WriteLine($"Error in StartRDPConnection: {ex.Message}");
+            Debug.WriteLine($"Error in StartRDPConnection: {ex}");
+            connection.IsConnected = false;
             throw;
         }
     }
 
 
 
+    private async Task StopRdpSessionAsync(HostlistModel connection, ActiveRdpSession session)
+    {
+        try
+        {
+            session.Cts.Cancel();
+
+            // Optional: kurz warten, damit Worker in finally sauber Disconnect/Destroy macht
+            if (session.Worker != null)
+            {
+                try { await Task.WhenAny(session.Worker, Task.Delay(1000)); } catch { }
+            }
+        }
+        finally
+        {
+            _activeRdp.Remove(connection);
+            connection.IsConnected = false;
+        }
+    }
+
     private void SortButton_Click(object sender, RoutedEventArgs e)
     {
-        // Basic handler: determine sort key from Button.Tag and log it.
         try
         {
             if (sender is Microsoft.UI.Xaml.Controls.Button b && b.Tag is string tag)
@@ -402,23 +565,18 @@ public sealed partial class SessionsPage : Page
     }
 
     private void _localization_service_subscribe()
-    {
-        _localizationService.LanguageChanged += LocalizationService_LanguageChanged;
-    }
+        => _localizationService.LanguageChanged += LocalizationService_LanguageChanged;
 
     private void LocalizationService_LanguageChanged(object? sender, System.EventArgs e)
     {
         Debug.WriteLine("SessionsPage: LanguageChanged received, re-localizing UI");
 
-        // Re-apply localized strings when language changes
         void UpdateTexts()
         {
-            // Update programmatically set values
-            
-            try { tbSearch.PlaceholderText = "Sessions_FilterTextBox.PlaceholderText".GetLocalized(); } catch { }
+            try { tbSearch.PlaceholderText = CTStrings.GetLocalized("Sessions_FilterTextBox.PlaceholderText"); } catch { }
+
         }
 
-        // Ensure update occurs on UI thread
         _ = DispatcherQueue.TryEnqueue(Microsoft.UI.Dispatching.DispatcherQueuePriority.Normal, () => UpdateTexts());
     }
 
@@ -427,9 +585,7 @@ public sealed partial class SessionsPage : Page
         try
         {
             if (App.MainWindow?.Content is FrameworkElement root)
-            {
                 return root.ActualTheme;
-            }
         }
         catch { }
 
@@ -446,187 +602,10 @@ public sealed partial class SessionsPage : Page
 
     private async void SessionsPage_Loaded(object? sender, RoutedEventArgs e)
     {
-        // Apply current filter (ListView is already bound to HostlistService.Hostlist)
         ApplyFilter();
 
         // Unregister handler to avoid repeated loading
         Loaded -= SessionsPage_Loaded;
-    }
-
-    public class MyDataClass : INotifyPropertyChanged
-    {
-        private string _username = string.Empty;
-        private string _poolName = string.Empty;
-        private string _serverName = string.Empty;
-        private int _sessionId;
-        private string _clientName = string.Empty;
-
-        public string Username { get => _username; set { _username = value; OnPropertyChanged(); } }
-        public string PoolName { get => _poolName; set { _poolName = value; OnPropertyChanged(); } }
-        public string ServerName { get => _serverName; set { _serverName = value; OnPropertyChanged(); } }
-        public int SessionId { get => _sessionId; set { _sessionId = value; OnPropertyChanged(); } }
-
-        // New: client name retrieved via WTS from the terminal server
-        public string ClientName { get => _clientName; set { _clientName = value; OnPropertyChanged(); } }
-
-        public MyDataClass(string userName, string poolName, string serverName, int sessionId)
-        {
-            Username = userName ?? string.Empty;
-            PoolName = poolName ?? string.Empty;
-            ServerName = serverName ?? string.Empty;
-            SessionId = sessionId;
-            ClientName = string.Empty;
-        }
-
-        public event PropertyChangedEventHandler? PropertyChanged;
-        private void OnPropertyChanged([CallerMemberName] string? name = null) => PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));
-    }
-
-    private readonly ObservableCollection<MyDataClass> MyData = new ObservableCollection<MyDataClass>();
-
-    // Semaphore to serialize ContentDialog.ShowAsync calls to avoid the "Only a single ContentDialog can be open at any time" COMException
-    private readonly SemaphoreSlim _dialogSemaphore = new SemaphoreSlim(1, 1);
-
-    private async Task<ContentDialogResult> ShowContentDialogSerializedAsync(ContentDialog dialog)
-    {
-        await _dialogSemaphore.WaitAsync();
-        try
-        {
-            return await dialog.ShowAsync();
-        }
-        catch (COMException)
-        {
-            // If another dialog is shown concurrently, swallow or log as needed.
-            return ContentDialogResult.None;
-        }
-        finally
-        {
-            _dialogSemaphore.Release();
-        }
-    }
-
-    // --- WTS P/Invoke declarations for client lookup ---
-    private enum WTS_INFO_CLASS
-    {
-        WTSClientName = 10,
-        WTSClientAddress = 14
-    }
-
-    [DllImport("wtsapi32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
-    private static extern IntPtr WTSOpenServer(string pServerName);
-
-    [DllImport("wtsapi32.dll")]
-    private static extern void WTSCloseServer(IntPtr hServer);
-
-    [DllImport("wtsapi32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
-    private static extern bool WTSQuerySessionInformation(IntPtr hServer, int sessionId, WTS_INFO_CLASS wtsInfoClass, out IntPtr ppBuffer, out int pBytesReturned);
-
-    [DllImport("wtsapi32.dll")]
-    private static extern void WTSFreeMemory(IntPtr pMemory);
-
-    // Decode pointer buffer robustly: try UTF-16 (Unicode), then ANSI (1252), then UTF-8
-    private static string PtrToStringSmart(IntPtr pBuffer, int bytes)
-    {
-        if (pBuffer == IntPtr.Zero || bytes <= 0)
-            return string.Empty;
-
-        // Try Unicode (UTF-16LE)
-        try
-        {
-            var s = Marshal.PtrToStringUni(pBuffer);
-            if (!string.IsNullOrWhiteSpace(s))
-            {
-                // check for likely valid characters
-                var total = s.Length;
-                var good = s.Count(c => (c >= 0x20 && c <= 0x7E) || char.IsLetterOrDigit(c) || char.IsWhiteSpace(c));
-                if (total > 0 && ((double)good / total) > 0.2)
-                {
-                    return s.Trim('\0', ' ');
-                }
-            }
-        }
-        catch { }
-
-        // Fallback: copy raw bytes and try ANSI (code page 1252)
-        try
-        {
-            var buffer = new byte[bytes];
-            Marshal.Copy(pBuffer, buffer, 0, bytes);
-
-            // Trim trailing zero bytes
-            var actualLength = buffer.Length;
-            while (actualLength > 0 && buffer[actualLength - 1] == 0) actualLength--;
-            if (actualLength <= 0) return string.Empty;
-
-            var ansi = Encoding.GetEncoding(1252).GetString(buffer, 0, actualLength);
-            if (!string.IsNullOrWhiteSpace(ansi))
-            {
-                var total = ansi.Length;
-                var good = ansi.Count(c => (c >= 0x20 && c <= 0x7E) || char.IsLetterOrDigit(c) || char.IsWhiteSpace(c));
-                if (total > 0 && ((double)good / total) > 0.2)
-                {
-                    return ansi.Trim('\0', ' ');
-                }
-            }
-
-            // Last try UTF8
-            try
-            {
-                var utf8 = Encoding.UTF8.GetString(buffer, 0, actualLength);
-                if (!string.IsNullOrWhiteSpace(utf8)) return utf8.Trim('\0', ' ');
-            }
-            catch { }
-        }
-        catch { }
-
-        return string.Empty;
-    }
-
-    private static string GetClientNameForSession(string server, int sessionId)
-    {
-        if (string.IsNullOrWhiteSpace(server)) return string.Empty;
-        IntPtr hServer = IntPtr.Zero;
-        try
-        {
-            hServer = WTSOpenServer(server);
-            if (hServer == IntPtr.Zero) return string.Empty;
-
-            if (WTSQuerySessionInformation(hServer, sessionId, WTS_INFO_CLASS.WTSClientName, out var pBuffer, out var bytes) && pBuffer != IntPtr.Zero)
-            {
-                try
-                {
-                    var clientName = PtrToStringSmart(pBuffer, bytes);
-                    return clientName;
-                }
-                finally
-                {
-                    WTSFreeMemory(pBuffer);
-                }
-            }
-        }
-        catch
-        {
-            // ignore errors and return empty
-        }
-        finally
-        {
-            if (hServer != IntPtr.Zero)
-            {
-                WTSCloseServer(hServer);
-            }
-        }
-
-        return string.Empty;
-    }
-
-    private static async Task<string> GetClientNameForSessionAsync(string server, int sessionId, int timeoutMs = 2000)
-    {
-        var t = Task.Run(() => GetClientNameForSession(server, sessionId));
-        if (await Task.WhenAny(t, Task.Delay(timeoutMs)) == t)
-        {
-            return t.Result;
-        }
-        return string.Empty;
     }
 
     private void tbSearch_TextChanged(Microsoft.UI.Xaml.Controls.AutoSuggestBox sender, Microsoft.UI.Xaml.Controls.AutoSuggestBoxTextChangedEventArgs e)
@@ -650,11 +629,11 @@ public sealed partial class SessionsPage : Page
         currentFilter = string.Empty;
         currentTypeFilter = string.Empty;
         currentGroupFilter = string.Empty;
-        
+
         if (tbSearch != null) tbSearch.Text = string.Empty;
         if (filterTypeComboBox != null) filterTypeComboBox.SelectedIndex = 0;
         if (filterGroupComboBox != null) filterGroupComboBox.SelectedIndex = 0;
-        
+
         ApplyFilter();
         Debug.WriteLine("All filters reset");
     }
@@ -662,7 +641,7 @@ public sealed partial class SessionsPage : Page
     private void FilterType_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         if (filterTypeComboBox == null) return;
-        
+
         if (filterTypeComboBox.SelectedIndex == 0)
         {
             currentTypeFilter = string.Empty;
@@ -671,7 +650,7 @@ public sealed partial class SessionsPage : Page
         {
             currentTypeFilter = item.Content?.ToString() ?? string.Empty;
         }
-        
+
         ApplyFilter();
         Debug.WriteLine($"Type filter: {currentTypeFilter}");
     }
@@ -679,7 +658,7 @@ public sealed partial class SessionsPage : Page
     private void FilterGroup_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         if (filterGroupComboBox == null) return;
-        
+
         if (filterGroupComboBox.SelectedIndex == 0)
         {
             currentGroupFilter = string.Empty;
@@ -688,7 +667,7 @@ public sealed partial class SessionsPage : Page
         {
             currentGroupFilter = item.Content?.ToString() ?? string.Empty;
         }
-        
+
         ApplyFilter();
         Debug.WriteLine($"Group filter: {currentGroupFilter}");
     }
@@ -701,7 +680,7 @@ public sealed partial class SessionsPage : Page
     private void SortAZ_Click(object sender, RoutedEventArgs e)
     {
         currentSortMode = "az";
-        sortButton.Content = "A-Z";
+        if (sortButton != null) sortButton.Content = "A-Z";
         ApplySorting();
         Debug.WriteLine("Sorted A-Z");
     }
@@ -709,7 +688,7 @@ public sealed partial class SessionsPage : Page
     private void SortZA_Click(object sender, RoutedEventArgs e)
     {
         currentSortMode = "za";
-        sortButton.Content = "Z-A";
+        if (sortButton != null) sortButton.Content = "Z-A";
         ApplySorting();
         Debug.WriteLine("Sorted Z-A");
     }
@@ -717,7 +696,7 @@ public sealed partial class SessionsPage : Page
     private void SortRecent_Click(object sender, RoutedEventArgs e)
     {
         currentSortMode = "recent";
-        sortButton.Content = "Recent";
+        if (sortButton != null) sortButton.Content = "Recent";
         ApplySorting();
         Debug.WriteLine("Sorted by Recent");
     }
@@ -747,7 +726,7 @@ public sealed partial class SessionsPage : Page
         }
 
         Debug.WriteLine($"ApplySorting: Sorted {sortedList.Count} items by {currentSortMode}");
-        
+
         // Reapply filters
         ApplyFilter();
     }
@@ -759,31 +738,31 @@ public sealed partial class SessionsPage : Page
             if (tag == "list")
             {
                 // Switch to List View
-                listViewToggle.IsChecked = true;
-                gridViewToggle.IsChecked = false;
-                
+                if (listViewToggle != null) listViewToggle.IsChecked = true;
+                if (gridViewToggle != null) gridViewToggle.IsChecked = false;
+
                 // Hide GridView, Show ListView
                 if (GridViewScrollViewer != null) GridViewScrollViewer.Visibility = Visibility.Collapsed;
                 if (ConnectionsListViewList != null) ConnectionsListViewList.Visibility = Visibility.Visible;
-                
+
                 // Sync data
                 SyncItemSources();
-                
+
                 Debug.WriteLine("Switched to List View");
             }
             else if (tag == "grid")
             {
                 // Switch to Grid View
-                listViewToggle.IsChecked = false;
-                gridViewToggle.IsChecked = true;
-                
+                if (listViewToggle != null) listViewToggle.IsChecked = false;
+                if (gridViewToggle != null) gridViewToggle.IsChecked = true;
+
                 // Show GridView, Hide ListView
                 if (GridViewScrollViewer != null) GridViewScrollViewer.Visibility = Visibility.Visible;
                 if (ConnectionsListViewList != null) ConnectionsListViewList.Visibility = Visibility.Collapsed;
-                
+
                 // Sync data
                 SyncItemSources();
-                
+
                 Debug.WriteLine("Switched to Grid View");
             }
         }
@@ -792,8 +771,8 @@ public sealed partial class SessionsPage : Page
     private void SyncItemSources()
     {
         // Get current ItemsSource from the visible control
-        var currentSource = GridViewScrollViewer?.Visibility == Visibility.Visible 
-            ? ConnectionsListView?.ItemsSource 
+        var currentSource = GridViewScrollViewer?.Visibility == Visibility.Visible
+            ? ConnectionsListView?.ItemsSource
             : ConnectionsListViewList?.ItemsSource;
 
         // Apply to both controls
@@ -854,13 +833,13 @@ public sealed partial class SessionsPage : Page
         try
         {
             var dataSource = new ObservableCollection<HostlistModel>(filteredData);
-            
+
             if (ConnectionsListView != null)
                 ConnectionsListView.ItemsSource = dataSource;
-            
+
             if (ConnectionsListViewList != null)
                 ConnectionsListViewList.ItemsSource = dataSource;
-            
+
             Debug.WriteLine($"ApplyFilter: Updated ItemsSource with {filteredData.Count()} items");
         }
         catch (Exception ex)
@@ -873,15 +852,28 @@ public sealed partial class SessionsPage : Page
     {
         if (e.ClickedItem is HostlistModel item)
         {
-            Debug.WriteLine($"ItemClick resolved: {item.DisplayName} protocol={item.Protocol}");
-            if (string.Equals(item.Protocol, "RDP", StringComparison.OrdinalIgnoreCase))
-            {
-                StartRDPConnection(item);
-            }
-            else if (string.Equals(item.Protocol, "SSH", StringComparison.OrdinalIgnoreCase))
-            {
-                StartSSHConnection(item);
-            }
+            // Do not start a connection on single click. Execute only the single-click behavior.
+            OnItemSingleClick(item);
         }
     }
+    private static Task EnqueueAsync(Microsoft.UI.Dispatching.DispatcherQueue queue, Action action)
+    {
+        var tcs = new TaskCompletionSource();
+
+        queue.TryEnqueue(() =>
+        {
+            try
+            {
+                action();
+                tcs.SetResult();
+            }
+            catch (Exception ex)
+            {
+                tcs.SetException(ex);
+            }
+        });
+
+        return tcs.Task;
+    }
+
 }

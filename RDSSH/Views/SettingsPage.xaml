@@ -108,6 +108,14 @@
                         </StackPanel>
                     </controls:SettingsExpander.Header>
                     <controls:SettingsExpander.Items>
+                        <controls:SettingsCard Header="FreeRDP" HeaderIcon="{ui:FontIcon Glyph=&#xE946;}">
+                            <StackPanel>
+                                <TextBlock Text="{x:Bind ViewModel.FreeRdpVersion}" />
+                                <TextBlock Text="{x:Bind ViewModel.FreeRdpRuntimeSummary}"
+Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+FontSize="12" />
+                            </StackPanel>
+                        </controls:SettingsCard>
                         <controls:SettingsCard x:Name="settingsCard" x:Uid="Settings_RepoCard" ActionIcon="{ui:FontIcon Glyph=&#xe8c8;}"
                                Click="OnCardClicked"
                                Header="Repository klonen"
