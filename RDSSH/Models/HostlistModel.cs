@@ -9,8 +9,33 @@ namespace RDSSH.Models
 
         public string Protocol { get; set; }
         public string Port { get; set; }
-        public string DisplayName { get; set; }
-        public string Hostname { get; set; }
+        private string _displayName;
+        private string _hostname;
+
+        public string DisplayName
+        {
+            get => _displayName;
+            set
+            {
+                _displayName = value;
+                OnPropertyChanged(nameof(DisplayName));
+                OnPropertyChanged(nameof(Title));
+            }
+        }
+
+        public string Hostname
+        {
+            get => _hostname;
+            set
+            {
+                _hostname = value;
+                OnPropertyChanged(nameof(Hostname));
+                OnPropertyChanged(nameof(Title));
+            }
+        }
+
+        // Helper: show DisplayName if present, otherwise fallback to Hostname
+        public string Title => string.IsNullOrWhiteSpace(DisplayName) ? Hostname ?? string.Empty : DisplayName;
         public string Domain { get; set; }
         public string Username { get; set; }
 

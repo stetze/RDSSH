@@ -2,7 +2,7 @@
   "profiles": {
     "RDSSH (Package)": {
       "commandName": "MsixPackage",
-      "nativeDebugging": false,
+      "nativeDebugging": true,
       "hotReloadEnabled": false,
       "allowLocalNetworkLoopbackProperty": false
     },

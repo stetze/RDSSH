@@ -273,7 +273,7 @@
                                     <StackPanel Grid.Row="1"
                                                 Padding="16,12,16,16"
                                                 Spacing="4">
-                                        <TextBlock Text="{x:Bind DisplayName}"
+                                        <TextBlock Text="{x:Bind Title}"
                                                    Foreground="{ThemeResource TextFillColorPrimaryBrush}"
                                                    FontWeight="SemiBold"
                                                    FontSize="16"
@@ -345,7 +345,7 @@
                                                    FontWeight="SemiBold"/>
                                     </Border>
 
-                                    <TextBlock Text="{x:Bind DisplayName}"
+                                    <TextBlock Text="{x:Bind Title}"
                                                Foreground="{ThemeResource TextFillColorPrimaryBrush}"
                                                FontWeight="SemiBold"
                                                FontSize="14"
