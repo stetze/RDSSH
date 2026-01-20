@@ -26,21 +26,17 @@ namespace RDSSH.Controls.Rdp.Msrdp
             Debug.WriteLine($"[MsRdpActiveXSession] ActiveX resolved. Type={_ax.GetType().FullName}");
         }
 
-        /// <summary>
-        /// Minimaler Connect: setzt Server/User und ruft Connect().
-        /// Passwort wird NICHT gesetzt -> Windows-Passwortdialog erscheint.
-        /// </summary>
         public void Connect(
             string host,
             int port,
             string username,
             string? domain,
-            string? password,   // wird absichtlich ignoriert für Prompt-Mode
+            string? password,           // aktuell prompt mode ok
             int desktopWidth,
             int desktopHeight,
             bool fullScreen = false,
             bool redirectClipboard = true,
-            bool promptForCreds = true,   // für den Zustand "Prompt kommt" = true
+            bool promptForCreds = true,
             bool enableCredSsp = true,
             bool ignoreCert = true)
         {
@@ -49,50 +45,106 @@ namespace RDSSH.Controls.Rdp.Msrdp
 
             host = (host ?? "").Trim();
             username = (username ?? "").Trim();
+            domain = string.IsNullOrWhiteSpace(domain) ? null : domain.Trim();
 
             if (string.IsNullOrWhiteSpace(host))
                 throw new ArgumentException("host empty", nameof(host));
 
-            // MsTscAx Basis
+            // Basis
             Set(_ax, "Server", host);
             Set(_ax, "UserName", username);
+            if (!string.IsNullOrWhiteSpace(domain))
+                TrySet(_ax, "Domain", domain);
 
-            // AdvancedSettings (MsTscAx hat meist AdvancedSettings / AdvancedSettings2+ je nach Version)
-            object? adv = null;
-            foreach (var name in new[]
-            {
-                "AdvancedSettings9","AdvancedSettings8","AdvancedSettings7","AdvancedSettings6",
-                "AdvancedSettings5","AdvancedSettings4","AdvancedSettings3","AdvancedSettings2","AdvancedSettings"
-            })
-            {
-                if (TryGet(_ax, name, out adv) && adv != null) break;
-                adv = null;
-            }
+            // Desktop size: muss VOR Connect gesetzt werden
+            TrySet(_ax, "DesktopWidth", desktopWidth);
+            TrySet(_ax, "DesktopHeight", desktopHeight);
+            TrySet(_ax, "FullScreen", fullScreen);
+
+            // PromptForCredentials (falls vorhanden)
+            TrySet(_ax, "PromptForCredentials", promptForCreds);
+
+            // ========== SETTINGS: Advanced / Secured ==========
+            // AdvancedSettings (höchste verfügbare Version)
+            object? adv = GetBestAdvancedSettings(_ax);
 
             if (adv != null)
             {
-                // Port (Property heißt i.d.R. RDPPort)
                 TrySet(adv, "RDPPort", port);
-
-                // Clipboard
                 TrySet(adv, "RedirectClipboard", redirectClipboard);
-
-                // CredSSP
                 TrySet(adv, "EnableCredSspSupport", enableCredSsp);
 
-                // Zertifikatslevel (falls vorhanden; nicht überall)
                 if (ignoreCert)
                     TrySet(adv, "AuthenticationLevel", 0);
+
+                // Resize-Verhalten:
+                // 1) SmartSizing: skaliert Inhalt sauber auf Viewport (wie 1Remote „Scale“)
+                TrySet(adv, "SmartSizing", true);
+
+                // 2) EnableDynamicResolution: echte dynamische Auflösung (wenn Server/Client es unterstützt)
+                // Hinweis: Property existiert nicht in allen Versionen -> TrySet ist ok
+                TrySet(adv, "EnableDynamicResolution", true);
+
+                // Hotkeys/WinKey-Unterstützung (Teil 1)
+                // AcceleratorPassthrough sitzt häufig in AdvancedSettings2+
+                TrySet(adv, "AcceleratorPassthrough", 1);
+
+                // Oft hilfreich: Fokus übernehmen
+                TrySet(adv, "GrabFocusOnConnect", true);
             }
 
-            // PromptForCredentials gibt es bei manchen Interfaces; wenn nicht, wird es ignoriert.
-            TrySet(_ax, "PromptForCredentials", promptForCreds);
+            // KeyboardHookMode sitzt in SecuredSettings2 (nicht zuverlässig in AdvancedSettings)
+            object? sec = GetBestSecuredSettings(_ax);
+            if (sec != null)
+            {
+                // 0=local, 1=remote nur full screen, 2=remote immer
+                TrySet(sec, "KeyboardHookMode", 2);
+            }
 
-            // Wichtig: KEIN Passwort setzen -> Prompt erscheint
+            // Passwort bewusst NICHT setzen -> Prompt
             Call(_ax, "Connect");
 
             _connected = true;
-            Debug.WriteLine("[MsRdpActiveXSession] Connect() called (prompt mode).");
+            Debug.WriteLine("[MsRdpActiveXSession] Connect() called.");
+        }
+
+        /// <summary>
+        /// Resize-Update: bevorzugt UpdateSessionDisplaySettings (Dynamic Resolution),
+        /// Fallback: DesktopWidth/DesktopHeight.
+        /// WICHTIG: Bei COM NICHT per GetMethod suchen, sondern per InvokeMember/IDispatch aufrufen.
+        /// </summary>
+        public void UpdateDisplay(int width, int height)
+        {
+            if (_ax == null) return;
+            if (!_connected) return;
+            if (width < 1 || height < 1) return;
+
+            try
+            {
+                // Versuch 1: echte dynamische Auflösung
+                // UpdateSessionDisplaySettings(uint DesktopWidth, uint DesktopHeight,
+                //   uint PhysicalWidth, uint PhysicalHeight, uint Orientation,
+                //   uint DesktopScaleFactor, uint DeviceScaleFactor)
+                Call(_ax, "UpdateSessionDisplaySettings",
+                    (uint)width,
+                    (uint)height,
+                    (uint)width,
+                    (uint)height,
+                    (uint)0,
+                    (uint)100,
+                    (uint)100);
+
+                Debug.WriteLine($"[MsRdpActiveXSession] UpdateSessionDisplaySettings({width}x{height})");
+                return;
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"[MsRdpActiveXSession] UpdateSessionDisplaySettings failed: {ex.Message}");
+            }
+
+            // Fallback: versuchen, DesktopWidth/Height anzupassen
+            TrySet(_ax, "DesktopWidth", width);
+            TrySet(_ax, "DesktopHeight", height);
         }
 
         public void Disconnect()
@@ -112,6 +164,33 @@ namespace RDSSH.Controls.Rdp.Msrdp
             }
 
             _ax = null;
+        }
+
+        private static object? GetBestAdvancedSettings(object ax)
+        {
+            object? adv = null;
+            foreach (var name in new[]
+            {
+                "AdvancedSettings9","AdvancedSettings8","AdvancedSettings7","AdvancedSettings6",
+                "AdvancedSettings5","AdvancedSettings4","AdvancedSettings3","AdvancedSettings2","AdvancedSettings"
+            })
+            {
+                if (TryGet(ax, name, out adv) && adv != null) return adv;
+            }
+            return null;
+        }
+
+        private static object? GetBestSecuredSettings(object ax)
+        {
+            object? sec = null;
+            foreach (var name in new[]
+            {
+                "SecuredSettings3","SecuredSettings2","SecuredSettings"
+            })
+            {
+                if (TryGet(ax, name, out sec) && sec != null) return sec;
+            }
+            return null;
         }
 
         private static void Set(object target, string name, object? value)

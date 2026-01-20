@@ -695,7 +695,13 @@ public sealed partial class SessionsPage : Page
             var sessionsWindow = App.GetOrCreateSessionsWindow();
             sessionsWindow.BringToFront();
 
-            var hostControl = sessionsWindow.AddRdpTab($"RDP: {connection.DisplayName}");
+            var tabTitle =
+            !string.IsNullOrWhiteSpace(connection.DisplayName) ? connection.DisplayName :
+            !string.IsNullOrWhiteSpace(connection.Hostname) ? connection.Hostname :
+            "RDP";
+
+            var hostControl = sessionsWindow.AddRdpTab(tabTitle);
+
 
             // WICHTIG: erst warten bis Child-HWND existiert
             var childHwnd = await hostControl.WaitForChildHwndAsync();
@@ -732,6 +738,8 @@ public sealed partial class SessionsPage : Page
                     var scale2 = hostControl.XamlRoot?.RasterizationScale ?? 1.0;
                     var w = (int)Math.Max(1, Math.Round(hostControl.ActualWidth * scale2));
                     var h = (int)Math.Max(1, Math.Round(hostControl.ActualHeight * scale2));
+
+                    session.Ax.UpdateDisplay(w, h);
                 }
                 catch { }
             };

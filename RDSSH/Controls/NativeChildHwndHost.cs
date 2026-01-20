@@ -1,5 +1,6 @@
 ﻿using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Input;
 using System;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
@@ -42,8 +43,34 @@ namespace RDSSH.Controls
             Unloaded += OnUnloaded;
             SizeChanged += OnSizeChanged;
 
+            PointerPressed += OnPointerPressed;
+
             HorizontalAlignment = HorizontalAlignment.Stretch;
             VerticalAlignment = VerticalAlignment.Stretch;
+        }
+
+        private void OnPointerPressed(object sender, PointerRoutedEventArgs e)
+        {
+            if (_disposed) return;
+            if (_childHwnd == IntPtr.Zero) return;
+
+            try
+            {
+                // sicherstellen, dass unser Fenster Eingabe bekommt
+                if (_topLevelHwnd != IntPtr.Zero)
+                    SetForegroundWindow(_topLevelHwnd);
+
+                // Fokus auf AtlAxWin
+                SetFocus(_childHwnd);
+
+                // Fokus auf inneres Child (RDP render window)
+                var inner = FindWindowEx(_childHwnd, IntPtr.Zero, null, null);
+                if (inner != IntPtr.Zero)
+                    SetFocus(inner);
+
+                e.Handled = true;
+            }
+            catch { }
         }
 
         public Task<IntPtr> WaitForChildHwndAsync() => _hwndTcs.Task;
@@ -72,28 +99,22 @@ namespace RDSSH.Controls
 
             EnsureChildWindow();
 
-            // Layout ist bei Loaded oft noch nicht final
             DispatcherQueue.TryEnqueue(UpdateBounds);
             DispatcherQueue.TryEnqueue(UpdateBounds);
         }
 
         private void OnUnloaded(object sender, RoutedEventArgs e)
         {
-            // NICHT zerstören (TabView/Virtualisierung triggert Unloaded)
             Hide();
             _isLoaded = false;
         }
 
-        // --- Win32 Styles ---
         private const int WS_CHILD = 0x40000000;
         private const int WS_VISIBLE = 0x10000000;
         private const int WS_CLIPCHILDREN = 0x02000000;
         private const int WS_CLIPSIBLINGS = 0x04000000;
 
-        // Castorix: WS_EX_LAYERED ist der “Game Changer”
         private const int WS_EX_LAYERED = 0x00080000;
-
-        // Layered attributes
         private const uint LWA_ALPHA = 0x00000002;
 
         private void EnsureChildWindow()
@@ -104,7 +125,6 @@ namespace RDSSH.Controls
 
             EnsureAtl();
 
-            // Castorix-Style: AtlAxWin als WS_EX_LAYERED Child am TopLevel
             _childHwnd = CreateWindowExW(
                 WS_EX_LAYERED,
                 "AtlAxWin",
@@ -122,9 +142,7 @@ namespace RDSSH.Controls
                 throw new InvalidOperationException($"CreateWindowExW failed for AtlAxWin. GetLastError={err}");
             }
 
-            // Explizit opaque setzen (Castorix macht das indirekt ebenfalls)
             SetLayeredWindowAttributes(_childHwnd, 0, 255, LWA_ALPHA);
-
             ShowWindow(_childHwnd, SW_SHOW);
 
             _hwndTcs.TrySetResult(_childHwnd);
@@ -142,11 +160,9 @@ namespace RDSSH.Controls
 
             try
             {
-                // DIP -> Pixel über echtes Window-DPI (robuster als RasterizationScale)
                 uint dpi = GetDpiForWindow(_topLevelHwnd);
                 double scale = dpi / 96.0;
 
-                // Position relativ zum Root-Visual (funktioniert auch in TabView)
                 var gt = TransformToVisual(null);
                 var topLeftDip = gt.TransformPoint(new Point(0, 0));
 
@@ -158,14 +174,12 @@ namespace RDSSH.Controls
                 if (w < 1) w = 1;
                 if (h < 1) h = 1;
 
-                // SetWindowPos ist für Layered/Redirection in der Praxis stabiler
                 SetWindowPos(
                     _childHwnd,
                     HWND_TOP,
                     x, y, w, h,
                     SWP_NOACTIVATE | SWP_SHOWWINDOW);
 
-                // Optional: WM_PAINT Trigger
                 InvalidateRect(_childHwnd, IntPtr.Zero, true);
 
                 BoundsUpdated?.Invoke(this, EventArgs.Empty);
@@ -182,7 +196,6 @@ namespace RDSSH.Controls
             if (_childHwnd != IntPtr.Zero)
             {
                 ShowWindow(_childHwnd, SW_SHOW);
-                // Sicherheit: beim Anzeigen direkt einmal korrekt positionieren
                 UpdateBounds();
             }
         }
@@ -200,6 +213,7 @@ namespace RDSSH.Controls
             Loaded -= OnLoaded;
             Unloaded -= OnUnloaded;
             SizeChanged -= OnSizeChanged;
+            PointerPressed -= OnPointerPressed;
 
             if (_childHwnd != IntPtr.Zero)
             {
@@ -211,10 +225,6 @@ namespace RDSSH.Controls
             _topLevelHwnd = IntPtr.Zero;
             _isLoaded = false;
         }
-
-        // -------------------------
-        // P/Invoke
-        // -------------------------
 
         [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
         private static extern IntPtr CreateWindowExW(
@@ -237,6 +247,15 @@ namespace RDSSH.Controls
         [DllImport("user32.dll")]
         private static extern uint GetDpiForWindow(IntPtr hwnd);
 
+        [DllImport("user32.dll")]
+        private static extern IntPtr SetFocus(IntPtr hWnd);
+
+        [DllImport("user32.dll")]
+        private static extern bool SetForegroundWindow(IntPtr hWnd);
+
+        [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+        private static extern IntPtr FindWindowEx(IntPtr parent, IntPtr childAfter, string? className, string? windowName);
+
         private static readonly IntPtr HWND_TOP = new IntPtr(0);
 
         private const uint SWP_NOACTIVATE = 0x0010;
@@ -257,10 +276,6 @@ namespace RDSSH.Controls
             _ = GetClassName(hwnd, sb, sb.Capacity);
             return sb.ToString();
         }
-
-        // -------------------------
-        // ATL
-        // -------------------------
 
         private static bool _atlInitialized;
 
