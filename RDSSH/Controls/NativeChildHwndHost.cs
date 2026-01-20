@@ -3,6 +3,7 @@ using Microsoft.UI.Xaml.Controls;
 using System;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
+using System.Text;
 using System.Threading.Tasks;
 using Windows.Foundation;
 using WinRT.Interop;
@@ -11,7 +12,7 @@ namespace RDSSH.Controls
 {
     public sealed class NativeChildHwndHost : Grid, IDisposable
     {
-        private IntPtr _parentHwnd;
+        private IntPtr _topLevelHwnd;
         private IntPtr _childHwnd;
         private bool _isLoaded;
         private bool _disposed;
@@ -64,11 +65,14 @@ namespace RDSSH.Controls
             _isLoaded = true;
 
             var window = HostWindow ?? throw new InvalidOperationException("HostWindow not set on NativeChildHwndHost.");
-            _parentHwnd = WindowNative.GetWindowHandle(window);
+            _topLevelHwnd = WindowNative.GetWindowHandle(window);
+
+            if (_topLevelHwnd == IntPtr.Zero)
+                throw new InvalidOperationException("Top-level HWND is null.");
 
             EnsureChildWindow();
 
-            // nach Loaded nochmal bounds setzen (Layout ist oft noch nicht final)
+            // Layout ist bei Loaded oft noch nicht final
             DispatcherQueue.TryEnqueue(UpdateBounds);
             DispatcherQueue.TryEnqueue(UpdateBounds);
         }
@@ -76,30 +80,38 @@ namespace RDSSH.Controls
         private void OnUnloaded(object sender, RoutedEventArgs e)
         {
             // NICHT zerstören (TabView/Virtualisierung triggert Unloaded)
-            // nur verstecken
             Hide();
             _isLoaded = false;
         }
 
+        // --- Win32 Styles ---
         private const int WS_CHILD = 0x40000000;
         private const int WS_VISIBLE = 0x10000000;
+        private const int WS_CLIPCHILDREN = 0x02000000;
+        private const int WS_CLIPSIBLINGS = 0x04000000;
+
+        // Castorix: WS_EX_LAYERED ist der “Game Changer”
+        private const int WS_EX_LAYERED = 0x00080000;
+
+        // Layered attributes
+        private const uint LWA_ALPHA = 0x00000002;
 
         private void EnsureChildWindow()
         {
             if (_disposed) return;
             if (_childHwnd != IntPtr.Zero) return;
-            if (_parentHwnd == IntPtr.Zero) throw new InvalidOperationException("Parent HWND not initialized.");
+            if (_topLevelHwnd == IntPtr.Zero) throw new InvalidOperationException("Parent HWND not initialized.");
 
             EnsureAtl();
 
-            // AtlAxWin: windowName = ProgID
+            // Castorix-Style: AtlAxWin als WS_EX_LAYERED Child am TopLevel
             _childHwnd = CreateWindowExW(
-                0,
+                WS_EX_LAYERED,
                 "AtlAxWin",
                 _activeXProgId,
-                WS_CHILD | WS_VISIBLE,
+                WS_CHILD | WS_VISIBLE | WS_CLIPCHILDREN | WS_CLIPSIBLINGS,
                 0, 0, 100, 100,
-                _parentHwnd,
+                _topLevelHwnd,
                 IntPtr.Zero,
                 IntPtr.Zero,
                 IntPtr.Zero);
@@ -110,12 +122,15 @@ namespace RDSSH.Controls
                 throw new InvalidOperationException($"CreateWindowExW failed for AtlAxWin. GetLastError={err}");
             }
 
+            // Explizit opaque setzen (Castorix macht das indirekt ebenfalls)
+            SetLayeredWindowAttributes(_childHwnd, 0, 255, LWA_ALPHA);
+
             ShowWindow(_childHwnd, SW_SHOW);
 
             _hwndTcs.TrySetResult(_childHwnd);
             ChildHwndCreated?.Invoke(this, _childHwnd);
 
-            Debug.WriteLine($"[NativeChildHwndHost] Child HWND created: 0x{_childHwnd:X}");
+            Debug.WriteLine($"[NativeChildHwndHost] Child HWND created: 0x{_childHwnd:X} (ProgId='{_activeXProgId}', Class='{GetClassNameOf(_childHwnd)}')");
         }
 
         private void UpdateBounds()
@@ -127,8 +142,11 @@ namespace RDSSH.Controls
 
             try
             {
-                var scale = XamlRoot.RasterizationScale;
+                // DIP -> Pixel über echtes Window-DPI (robuster als RasterizationScale)
+                uint dpi = GetDpiForWindow(_topLevelHwnd);
+                double scale = dpi / 96.0;
 
+                // Position relativ zum Root-Visual (funktioniert auch in TabView)
                 var gt = TransformToVisual(null);
                 var topLeftDip = gt.TransformPoint(new Point(0, 0));
 
@@ -137,7 +155,19 @@ namespace RDSSH.Controls
                 int w = (int)Math.Round(ActualWidth * scale);
                 int h = (int)Math.Round(ActualHeight * scale);
 
-                MoveWindow(_childHwnd, x, y, w, h, true);
+                if (w < 1) w = 1;
+                if (h < 1) h = 1;
+
+                // SetWindowPos ist für Layered/Redirection in der Praxis stabiler
+                SetWindowPos(
+                    _childHwnd,
+                    HWND_TOP,
+                    x, y, w, h,
+                    SWP_NOACTIVATE | SWP_SHOWWINDOW);
+
+                // Optional: WM_PAINT Trigger
+                InvalidateRect(_childHwnd, IntPtr.Zero, true);
+
                 BoundsUpdated?.Invoke(this, EventArgs.Empty);
             }
             catch (Exception ex)
@@ -149,7 +179,12 @@ namespace RDSSH.Controls
         public void Show()
         {
             if (_disposed) return;
-            if (_childHwnd != IntPtr.Zero) ShowWindow(_childHwnd, SW_SHOW);
+            if (_childHwnd != IntPtr.Zero)
+            {
+                ShowWindow(_childHwnd, SW_SHOW);
+                // Sicherheit: beim Anzeigen direkt einmal korrekt positionieren
+                UpdateBounds();
+            }
         }
 
         public void Hide()
@@ -173,9 +208,13 @@ namespace RDSSH.Controls
                 _childHwnd = IntPtr.Zero;
             }
 
-            _parentHwnd = IntPtr.Zero;
+            _topLevelHwnd = IntPtr.Zero;
             _isLoaded = false;
         }
+
+        // -------------------------
+        // P/Invoke
+        // -------------------------
 
         [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
         private static extern IntPtr CreateWindowExW(
@@ -186,11 +225,42 @@ namespace RDSSH.Controls
         [DllImport("user32.dll", SetLastError = true)]
         private static extern bool DestroyWindow(IntPtr hWnd);
 
-        [DllImport("user32.dll", SetLastError = true)]
-        private static extern bool MoveWindow(IntPtr hWnd, int x, int y, int cx, int cy, bool repaint);
-
         [DllImport("user32.dll")]
         private static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+
+        [DllImport("user32.dll", SetLastError = true)]
+        private static extern bool InvalidateRect(IntPtr hWnd, IntPtr lpRect, bool bErase);
+
+        [DllImport("user32.dll", SetLastError = true)]
+        private static extern bool SetLayeredWindowAttributes(IntPtr hwnd, uint crKey, byte bAlpha, uint dwFlags);
+
+        [DllImport("user32.dll")]
+        private static extern uint GetDpiForWindow(IntPtr hwnd);
+
+        private static readonly IntPtr HWND_TOP = new IntPtr(0);
+
+        private const uint SWP_NOACTIVATE = 0x0010;
+        private const uint SWP_SHOWWINDOW = 0x0040;
+
+        [DllImport("user32.dll", SetLastError = true)]
+        private static extern bool SetWindowPos(
+            IntPtr hWnd, IntPtr hWndInsertAfter,
+            int X, int Y, int cx, int cy,
+            uint uFlags);
+
+        [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+        private static extern int GetClassName(IntPtr hWnd, StringBuilder lpClassName, int nMaxCount);
+
+        private static string GetClassNameOf(IntPtr hwnd)
+        {
+            var sb = new StringBuilder(256);
+            _ = GetClassName(hwnd, sb, sb.Capacity);
+            return sb.ToString();
+        }
+
+        // -------------------------
+        // ATL
+        // -------------------------
 
         private static bool _atlInitialized;
 
