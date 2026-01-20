@@ -17,14 +17,13 @@ namespace RDSSH.Views
 
         public NativeChildHwndHost AddRdpTab(string title)
         {
-            var host = new NativeChildHwndHost
+            // WICHTIG: Für den Zustand "Passwortabfrage kommt" verwenden wir das klassische Control:
+            // MsTscAx.MsTscAx
+            var host = new NativeChildHwndHost("MsTscAx.MsTscAx")
             {
-                HostWindow = this,
-                HorizontalAlignment = HorizontalAlignment.Stretch,
-                VerticalAlignment = VerticalAlignment.Stretch
+                HostWindow = this
             };
 
-            // Container erzwingt korrektes Measure/Arrange
             var container = new Grid
             {
                 HorizontalAlignment = HorizontalAlignment.Stretch,
@@ -50,7 +49,7 @@ namespace RDSSH.Views
         // Foreground / Focus helper
         [DllImport("user32.dll")] static extern IntPtr GetForegroundWindow();
         [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr hWnd, IntPtr lpdwProcessId);
-        [DllImport("kernel32.dll")] static extern uint GetCurrentThreadId(); // WICHTIG: kernel32, nicht user32
+        [DllImport("kernel32.dll")] static extern uint GetCurrentThreadId();
         [DllImport("user32.dll")] static extern bool AttachThreadInput(uint idAttach, uint idAttachTo, bool fAttach);
         [DllImport("user32.dll")] static extern bool BringWindowToTop(IntPtr hWnd);
         [DllImport("user32.dll")] static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
@@ -64,7 +63,6 @@ namespace RDSSH.Views
             try
             {
                 var hwnd = WindowNative.GetWindowHandle(this);
-
                 ShowWindow(hwnd, SW_RESTORE);
                 ShowWindow(hwnd, SW_SHOW);
 
@@ -86,20 +84,20 @@ namespace RDSSH.Views
 
         private void SessionsTabView_TabCloseRequested(TabView sender, TabViewTabCloseRequestedEventArgs args)
         {
-            if (args.Item is TabViewItem tvi)
+            if (args.Item is not TabViewItem tvi)
+                return;
+
+            try
             {
                 // Content ist Grid -> Host ist Child[0]
-                try
-                {
-                    if (tvi.Content is Grid g && g.Children.Count > 0 && g.Children[0] is IDisposable d1)
-                        d1.Dispose();
-                    else if (tvi.Content is IDisposable d2)
-                        d2.Dispose();
-                }
-                catch { }
-
-                sender.TabItems.Remove(tvi);
+                if (tvi.Content is Grid g && g.Children.Count > 0 && g.Children[0] is IDisposable d1)
+                    d1.Dispose();
+                else if (tvi.Content is IDisposable d2)
+                    d2.Dispose();
             }
+            catch { }
+
+            sender.TabItems.Remove(tvi);
         }
     }
 }

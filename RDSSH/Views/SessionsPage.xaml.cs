@@ -29,6 +29,9 @@ using System.Threading.Tasks;
 using Windows.Globalization;
 using CTStrings = CommunityToolkit.WinUI.StringExtensions;
 
+// >>> NEU: MSRDP ActiveX Wrapper (bitte Namespace ggf. anpassen)
+using RDSSH.Controls.Rdp.Msrdp;
+
 namespace RDSSH.Views;
 
 public sealed partial class SessionsPage : Page
@@ -69,7 +72,6 @@ public sealed partial class SessionsPage : Page
         return val;
     }
 
-
     public SessionsPage()
     {
         ViewModel = App.GetService<SessionsViewModel>();
@@ -78,28 +80,24 @@ public sealed partial class SessionsPage : Page
 
         InitializeComponent();
 
-        // Note: We don't bind directly here anymore, ApplyFilter will handle it
-        // This prevents the binding from being overwritten
-
         // Wire localization change
         _localization_service_subscribe();
 
         // Set UI texts (use localization with fallback)
         try { tbSearch.PlaceholderText = CTStrings.GetLocalized("Sessions_FilterTextBox.PlaceholderText"); } catch { }
 
-
         // Ensure the list is populated automatically when the page is first shown
         Loaded += SessionsPage_Loaded;
     }
 
+    // >>> GEÄNDERT: ActiveRdpSession hält jetzt MSRDP ActiveX Session (statt Handle/Worker)
     private sealed class ActiveRdpSession
     {
-        public nint Handle;
-        public CancellationTokenSource Cts = new();
-        public Task? Worker;
+        public MsRdpActiveXSession Ax = default!;
     }
 
-    private readonly Dictionary<HostlistModel, ActiveRdpSession> _activeRdp = new();
+    private readonly Dictionary<HostlistModel, ActiveRdpSession> _activeRdp
+    = new(System.Collections.Generic.ReferenceEqualityComparer.Instance);
 
     private void DevicesAddButton_Click(object sender, RoutedEventArgs e)
     {
@@ -276,6 +274,62 @@ public sealed partial class SessionsPage : Page
                 return;
             }
 
+            if (string.IsNullOrWhiteSpace(item.Hostname))
+            {
+                Debug.WriteLine("DoubleTapped: Hostname empty -> abort");
+                return;
+            }
+
+            if (string.IsNullOrWhiteSpace(item.Protocol))
+            {
+                Debug.WriteLine("DoubleTapped: Protocol empty -> abort");
+                return;
+            }
+
+            // 4b) Guard: niemals mit leeren/ungültigen Daten verbinden (sonst mstscax AV)
+            if (string.Equals(item.Protocol, "RDP", StringComparison.OrdinalIgnoreCase))
+            {
+                var host = (item.Hostname ?? "").Trim();
+                if (string.IsNullOrWhiteSpace(host))
+                {
+                    Debug.WriteLine("DoubleTapped: RDP host empty -> abort");
+                    return;
+                }
+
+                // Port validieren
+                var portStr = (item.Port ?? "").Trim();
+                if (!string.IsNullOrEmpty(portStr) && (!int.TryParse(portStr, out var p) || p <= 0))
+                {
+                    Debug.WriteLine($"DoubleTapped: RDP port invalid '{portStr}' -> abort");
+                    return;
+                }
+
+                // CredentialId muss gesetzt sein (dein MSRDP-Pfad braucht sie)
+                if (item.CredentialId == null || item.CredentialId == Guid.Empty)
+                {
+                    Debug.WriteLine("DoubleTapped: RDP CredentialId missing -> abort");
+                    return;
+                }
+
+                if (item.CredentialId == null || item.CredentialId == Guid.Empty)
+                {
+                    Debug.WriteLine("DoubleTapped: CredentialId missing -> abort");
+                    return;
+                }
+            }
+            else if (string.Equals(item.Protocol, "SSH", StringComparison.OrdinalIgnoreCase))
+            {
+                var host = (item.Hostname ?? "").Trim();
+                var user = (item.Username ?? "").Trim();
+
+                if (string.IsNullOrWhiteSpace(host) || string.IsNullOrWhiteSpace(user))
+                {
+                    Debug.WriteLine("DoubleTapped: SSH host/user empty -> abort");
+                    return;
+                }
+            }
+
+
             // Execute single-click behavior first (selection/details/etc.)
             OnItemSingleClick(item);
 
@@ -300,7 +354,6 @@ public sealed partial class SessionsPage : Page
             Debug.WriteLine($"ConnectionsListView_DoubleTapped error: {ex}");
         }
     }
-
 
     // Extracted single-click actions here. This will NOT start connections.
     private void OnItemSingleClick(HostlistModel item)
@@ -360,8 +413,44 @@ public sealed partial class SessionsPage : Page
         return args.ToString().Trim();
     }
 
+    private static void SplitUserAndDomain(string inputUser, string? inputDomain, out string user, out string? domain)
+    {
+        user = (inputUser ?? "").Trim();
+        domain = string.IsNullOrWhiteSpace(inputDomain) ? null : inputDomain.Trim();
+
+        // DOMAIN\user
+        var bs = user.IndexOf('\\');
+        if (bs > 0 && bs < user.Length - 1)
+        {
+            var d = user.Substring(0, bs);
+            var u = user.Substring(bs + 1);
+
+            if (string.IsNullOrWhiteSpace(domain))
+                domain = d;
+
+            user = u;
+            return;
+        }
+
+        // user@domain
+        var at = user.IndexOf('@');
+        if (at > 0 && at < user.Length - 1)
+        {
+            var u = user.Substring(0, at);
+            var d = user.Substring(at + 1);
+
+            if (string.IsNullOrWhiteSpace(domain))
+                domain = d;
+
+            user = u;
+        }
+    }
+
+
     private async void StartRDPConnection(HostlistModel connection)
     {
+        // ====== FreeRDP-IMPLEMENTIERUNG (vollständig erhalten, aber auskommentiert) ======
+        /*
         RdpSessionNative.LogRuntimeVersions();
 
         try
@@ -533,27 +622,179 @@ public sealed partial class SessionsPage : Page
             connection.IsConnected = false;
             throw;
         }
+        */
+
+        // ====== MSRDP ActiveX IMPLEMENTIERUNG (aktiv) ======
+        try
+        {
+            // Toggle: Wenn schon aktiv -> disconnect
+            if (_activeRdp.TryGetValue(connection, out var existing))
+            {
+                Debug.WriteLine("StartRDPConnection (MSRDP): already connected -> disconnect");
+                await StopRdpSessionAsync(connection, existing);
+                return;
+            }
+
+            connection.IsConnected = true;
+
+            var host = (connection.Hostname ?? "").Trim();
+            var userFromConnection = (connection.Username ?? "").Trim();   // nur Fallback / Anzeige
+            var domainFromConnection = (connection.Domain ?? "").Trim();
+
+            int port = 3389;
+            if (!string.IsNullOrWhiteSpace(connection.Port) &&
+                int.TryParse(connection.Port, out var p) &&
+                p > 0)
+            {
+                port = p;
+            }
+
+            if (string.IsNullOrWhiteSpace(host))
+            {
+                Debug.WriteLine("StartRDPConnection (MSRDP): Host fehlt.");
+                connection.IsConnected = false;
+                return;
+            }
+
+            // >>> Credentials kommen aus deinem CredentialService über CredentialId
+            if (connection.CredentialId == null || connection.CredentialId == Guid.Empty)
+            {
+                Debug.WriteLine("StartRDPConnection (MSRDP): Connection hat keine CredentialId gesetzt.");
+                connection.IsConnected = false;
+                return;
+            }
+
+            var credService = App.GetService<CredentialService>();
+            var vaultCred = credService.ReadVaultCredential(connection.CredentialId.Value);
+
+            if (vaultCred == null)
+            {
+                Debug.WriteLine($"StartRDPConnection (MSRDP): CredentialId {connection.CredentialId} im Vault nicht gefunden.");
+                connection.IsConnected = false;
+                return;
+            }
+
+            // Username/Domain bevorzugt aus Vault; Fallback auf Connection-Felder
+            var vaultUserRaw = !string.IsNullOrWhiteSpace(vaultCred.UserName) ? vaultCred.UserName : userFromConnection;
+
+            // Domain kommt bei dir über Comment (du nutzt Comment als Domain); fallback auf connection.Domain
+            var vaultDomainRaw = !string.IsNullOrWhiteSpace(vaultCred.Comment) ? vaultCred.Comment : domainFromConnection;
+
+            SplitUserAndDomain(vaultUserRaw, vaultDomainRaw, out var connectUser, out var connectDomain);
+
+            // Passwort muss vorhanden sein, sonst gibt es Prompt oder Fail
+            string pwd = vaultCred.Password;
+            if (string.IsNullOrEmpty(pwd))
+            {
+                Debug.WriteLine("StartRDPConnection (MSRDP): Vault-Credential hat kein Passwort (secret ist leer).");
+                connection.IsConnected = false;
+                return;
+            }
+
+            // --- SessionsHostWindow holen + in Vordergrund bringen + Tab erstellen ---
+            var sessionsWindow = App.GetOrCreateSessionsWindow();
+            sessionsWindow.BringToFront();
+
+            var hostControl = sessionsWindow.AddRdpTab($"RDP: {connection.DisplayName}");
+
+            // WICHTIG: erst warten bis Child-HWND existiert
+            var childHwnd = await hostControl.WaitForChildHwndAsync();
+            Debug.WriteLine($"StartRDPConnection (MSRDP): got childHwnd=0x{childHwnd:X}");
+
+            // Pixelgroesse fuer RDP (Skalierung beachten)
+            var scale = hostControl.XamlRoot?.RasterizationScale ?? 1.0;
+            int width = (int)Math.Max(1, Math.Round(hostControl.ActualWidth * scale));
+            int height = (int)Math.Max(1, Math.Round(hostControl.ActualHeight * scale));
+
+            if (width <= 1 || height <= 1)
+            {
+                width = 1280;
+                height = 720;
+            }
+
+            // ActiveX Session erstellen (UI Thread empfohlen)
+            var ax = new MsRdpActiveXSession();
+
+            // Falls du EnqueueAsync hast, nutze es. Sonst direkt aufrufen (nur wenn UI-Thread).
+            await EnqueueAsync(DispatcherQueue, () =>
+            {
+                ax.Initialize(childHwnd);
+            });
+
+            var session = new ActiveRdpSession { Ax = ax };
+            _activeRdp[connection] = session;
+
+            // Resize-Bridge (wieder in Pixeln, nicht in DIPs)
+            hostControl.BoundsUpdated += (_, __) =>
+            {
+                try
+                {
+                    var scale2 = hostControl.XamlRoot?.RasterizationScale ?? 1.0;
+                    var w = (int)Math.Max(1, Math.Round(hostControl.ActualWidth * scale2));
+                    var h = (int)Math.Max(1, Math.Round(hostControl.ActualHeight * scale2));
+                }
+                catch { }
+            };
+
+            try
+            {
+                // Connect ebenfalls auf UI Thread
+                await EnqueueAsync(DispatcherQueue, () =>
+                {
+                    session.Ax.Connect(
+                    host: host,
+                    port: port,
+                    username: connectUser,
+                    domain: connectDomain,
+                    password: null,          // absichtlich null -> Prompt
+                    desktopWidth: width,
+                    desktopHeight: height,
+                    promptForCreds: true,
+                    redirectClipboard: connection.RdpClipboard,
+                    enableCredSsp: true,
+                    ignoreCert: connection.RdpIgnoreCert
+);
+
+                });
+
+                Debug.WriteLine("StartRDPConnection (MSRDP): Connect() called.");
+            }
+            finally
+            {
+                pwd = string.Empty;
+            }
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine($"Error in StartRDPConnection (MSRDP): {ex}");
+            connection.IsConnected = false;
+
+            if (_activeRdp.TryGetValue(connection, out var s))
+            {
+                try { s.Ax?.Dispose(); } catch { }
+                _activeRdp.Remove(connection);
+            }
+
+            throw;
+        }
     }
 
-
-
-    private async Task StopRdpSessionAsync(HostlistModel connection, ActiveRdpSession session)
+    // >>> GEÄNDERT: Stop für ActiveX
+    private Task StopRdpSessionAsync(HostlistModel connection, ActiveRdpSession session)
     {
         try
         {
-            session.Cts.Cancel();
-
-            // Optional: kurz warten, damit Worker in finally sauber Disconnect/Destroy macht
-            if (session.Worker != null)
-            {
-                try { await Task.WhenAny(session.Worker, Task.Delay(1000)); } catch { }
-            }
+            session.Ax?.Disconnect();
+            session.Ax?.Dispose();
         }
+        catch { }
         finally
         {
             _activeRdp.Remove(connection);
             connection.IsConnected = false;
         }
+
+        return Task.CompletedTask;
     }
 
     private void SortButton_Click(object sender, RoutedEventArgs e)
@@ -579,7 +820,6 @@ public sealed partial class SessionsPage : Page
         void UpdateTexts()
         {
             try { tbSearch.PlaceholderText = CTStrings.GetLocalized("Sessions_FilterTextBox.PlaceholderText"); } catch { }
-
         }
 
         _ = DispatcherQueue.TryEnqueue(Microsoft.UI.Dispatching.DispatcherQueuePriority.Normal, () => UpdateTexts());
@@ -827,12 +1067,6 @@ public sealed partial class SessionsPage : Page
 
         // Apply group filter - Note: Group property doesn't exist yet in HostlistModel
         // Can be implemented later when Group property is added to the model
-        // if (!string.IsNullOrEmpty(currentGroupFilter) && currentGroupFilter != "Group")
-        // {
-        //     filteredData = filteredData.Where(item =>
-        //         !string.IsNullOrEmpty(item.Group) &&
-        //         item.Group.Equals(currentGroupFilter, StringComparison.OrdinalIgnoreCase));
-        // }
 
         // Update the ItemsSource for both views
         try
@@ -861,6 +1095,7 @@ public sealed partial class SessionsPage : Page
             OnItemSingleClick(item);
         }
     }
+
     private static Task EnqueueAsync(Microsoft.UI.Dispatching.DispatcherQueue queue, Action action)
     {
         var tcs = new TaskCompletionSource();
@@ -880,5 +1115,4 @@ public sealed partial class SessionsPage : Page
 
         return tcs.Task;
     }
-
 }

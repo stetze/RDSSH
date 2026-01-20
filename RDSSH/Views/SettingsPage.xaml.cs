@@ -60,89 +60,81 @@ public sealed partial class SettingsPage : Page
     private void SaveButton_Click(object sender, RoutedEventArgs e)
     {
         var username = UsernameTextBox.Text?.Trim() ?? string.Empty;
-        var password = PasswordBox.Password;
+        var password = PasswordBox.Password ?? string.Empty;
         var domain = DomainTextBox.Text?.Trim() ?? string.Empty;
 
         if (string.IsNullOrWhiteSpace(username))
-        {
             return;
-        }
 
+        // Edit existing
         if (_credentialService.CurrentEditingUser != null)
         {
             var existing = _credentialService.CurrentEditingUser;
-            var oldApplicationName = "RDSSH\\" + existing.Username;
-            var newApplicationName = "RDSSH\\" + username;
 
-            // Write new credential under unified prefix
-            CredentialManager.WriteCredential(newApplicationName, username, password, domain, CredentialPersistence.LocalMachine);
-
-            // Remove old if name changed
-            if (!string.Equals(oldApplicationName, newApplicationName, StringComparison.OrdinalIgnoreCase))
-            {
-                try { CredentialManager.DeleteCredential(oldApplicationName); } catch { }
-                // also try legacy key
-                try { CredentialManager.DeleteCredential("RDSSH-Launcher\\" + existing.Username); } catch { }
-            }
-
-            existing.Username = username;
-            existing.Domain = domain;
-
-            var index = _credentialService.CredentialDataSet.IndexOf(existing);
-            if (index >= 0)
-            {
-                _credentialService.CredentialDataSet[index] = existing;
-            }
+            // WICHTIG: Bei Update muss die ID gleich bleiben (stabile Referenz!)
+            _credentialService.UpdateCredential(
+                credential: existing,
+                newUsername: username,
+                newDomain: domain,
+                newPassword: string.IsNullOrEmpty(password) ? null : password
+            );
 
             _credentialService.CurrentEditingUser = null;
         }
         else
         {
-            // Write new credential under unified prefix
-            CredentialManager.WriteCredential("RDSSH\\" + username, username, password, domain, CredentialPersistence.LocalMachine);
-
-            _credentialService.CredentialDataSet.Add(new CredentialModel
+            // Create new (CredentialService erzeugt/verwaltet neuen Key im neuen Schema)
+            var model = new CredentialModel
             {
                 ID = Guid.NewGuid(),
                 Username = username,
-                Domain = domain
-            });
+                Domain = domain,
+                Password = password
+            };
+
+            _credentialService.AddCredential(model);
         }
 
         ClearUserDetails();
     }
 
+
     private void EditButton_Click(object sender, RoutedEventArgs e)
     {
-        if (sender is Button button && button.Tag is Guid id)
-        {
-            var user = _credentialService.CredentialDataSet.FirstOrDefault(u => u.ID == id);
-            if (user == null) return;
+        if (sender is not Button button || button.Tag is not Guid id)
+            return;
 
-            UsernameTextBox.Text = user.Username;
-            DomainTextBox.Text = user.Domain;
+        var user = _credentialService.CredentialDataSet.FirstOrDefault(u => u.ID == id);
+        if (user == null)
+            return;
 
-            // Try unified prefix first, fallback to legacy
-            var credential = CredentialManager.ReadCredential("RDSSH\\" + user.Username) ?? CredentialManager.ReadCredential("RDSSH-Launcher\\" + user.Username);
-            PasswordBox.Password = credential?.Password ?? string.Empty;
+        UsernameTextBox.Text = user.Username;
+        DomainTextBox.Text = user.Domain;
 
-            _credentialService.CurrentEditingUser = user;
-        }
+        // Passwort aus dem Vault laden (neues Schema)
+        var vault = _credentialService.ReadVaultCredential(user.ID);
+        PasswordBox.Password = vault?.Password ?? string.Empty;
+
+        _credentialService.CurrentEditingUser = user;
     }
+
 
     private void DeleteButton_Click(object sender, RoutedEventArgs e)
     {
-        if (sender is Button button && button.Tag is Guid id)
-        {
-            var user = _credentialService.CredentialDataSet.FirstOrDefault(u => u.ID == id);
-            if (user == null) return;
+        if (sender is not Button button || button.Tag is not Guid id)
+            return;
 
-            try { CredentialManager.DeleteCredential("RDSSH\\" + user.Username); } catch { }
-            try { CredentialManager.DeleteCredential("RDSSH-Launcher\\" + user.Username); } catch { }
+        var user = _credentialService.CredentialDataSet.FirstOrDefault(u => u.ID == id);
+        if (user == null)
+            return;
 
-            _credentialService.CredentialDataSet.Remove(user);
-        }
+        _credentialService.DeleteCredential(user);
+
+        // Falls du noch Eingabefelder befüllt hattest
+        if (_credentialService.CurrentEditingUser?.ID == user.ID)
+            ClearUserDetails();
     }
+
 
     private void CancelButton_Click(object sender, RoutedEventArgs e) => ClearUserDetails();
 

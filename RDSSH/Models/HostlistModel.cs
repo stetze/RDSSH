@@ -7,6 +7,11 @@ namespace RDSSH.Models
     {
         private bool _isConnected;
 
+        // >>> NEU: stabile ID pro Verbindung
+        public Guid ConnectionId { get; set; } = Guid.NewGuid();
+
+        // Referenz auf gespeicherten Credential-Account
+        public Guid? CredentialId { get; set; }
         public string Protocol { get; set; }
         public string Port { get; set; }
         private string _displayName;
@@ -36,17 +41,18 @@ namespace RDSSH.Models
 
         // Helper: show DisplayName if present, otherwise fallback to Hostname
         public string Title => string.IsNullOrWhiteSpace(DisplayName) ? Hostname ?? string.Empty : DisplayName;
+
         public string Domain { get; set; }
         public string Username { get; set; }
 
         // --- RDP Advanced Settings (persisted) ---
-        public bool RdpIgnoreCert { get; set; }              // /cert:ignore (NOT default)
-        public bool RdpTlsLegacy { get; set; }               // /tls-seclevel:0 (NOT default)
-        public bool RdpDynamicResolution { get; set; } = true; // /dynamic-resolution (default ON)
-        public bool RdpClipboard { get; set; } = true;       // /clipboard (default ON)
-        public bool RdpAdminMode { get; set; }               // /admin (NOT default)
-        public string RdpLoadBalanceInfo { get; set; }       // /load-balance-info:tsv://...
-        public string RdpExtraArgs { get; set; }             // optional: raw additional args (advanced textbox)
+        public bool RdpIgnoreCert { get; set; }
+        public bool RdpTlsLegacy { get; set; }
+        public bool RdpDynamicResolution { get; set; } = true;
+        public bool RdpClipboard { get; set; } = true;
+        public bool RdpAdminMode { get; set; }
+        public string RdpLoadBalanceInfo { get; set; }
+        public string RdpExtraArgs { get; set; }
 
         public bool IsConnected
         {
@@ -69,14 +75,13 @@ namespace RDSSH.Models
         {
             if (other == null) return false;
 
-            return string.Equals(Protocol, other.Protocol, StringComparison.Ordinal) &&
+            return ConnectionId == other.ConnectionId &&
+                   string.Equals(Protocol, other.Protocol, StringComparison.Ordinal) &&
                    string.Equals(Port, other.Port, StringComparison.Ordinal) &&
                    string.Equals(DisplayName, other.DisplayName, StringComparison.Ordinal) &&
                    string.Equals(Hostname, other.Hostname, StringComparison.Ordinal) &&
                    string.Equals(Domain, other.Domain, StringComparison.Ordinal) &&
                    string.Equals(Username, other.Username, StringComparison.Ordinal) &&
-
-                   // New fields
                    RdpIgnoreCert == other.RdpIgnoreCert &&
                    RdpTlsLegacy == other.RdpTlsLegacy &&
                    RdpDynamicResolution == other.RdpDynamicResolution &&
@@ -90,8 +95,8 @@ namespace RDSSH.Models
 
         public override int GetHashCode()
         {
-            // HashCode.Combine hat Limitierungen – daher “stufenweise”:
             var h = new HashCode();
+            h.Add(ConnectionId);
             h.Add(Protocol);
             h.Add(Port);
             h.Add(DisplayName);

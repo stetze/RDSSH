@@ -40,8 +40,18 @@ namespace RDSSH.Views
                 HostnameTextBox.Text = _connectionToEdit.Hostname;
                 DomainTextBox.Text = _connectionToEdit.Domain;
 
-                CredentialComboBox.SelectedItem = CredentialService.CredentialDataSet
-                    .FirstOrDefault(cred => cred.Username == _connectionToEdit.Username);
+                // >>> FIX: Credential-Auswahl primär über CredentialId (sonst kollidieren gleiche Usernames)
+                if (_connectionToEdit.CredentialId != null && _connectionToEdit.CredentialId != Guid.Empty)
+                {
+                    CredentialComboBox.SelectedItem = CredentialService.CredentialDataSet
+                        .FirstOrDefault(cred => cred.ID == _connectionToEdit.CredentialId.Value);
+                }
+                else
+                {
+                    // Legacy-Fallback: alte Connections hatten ggf. nur Username
+                    CredentialComboBox.SelectedItem = CredentialService.CredentialDataSet
+                        .FirstOrDefault(cred => cred.Username == _connectionToEdit.Username);
+                }
 
                 // --- Load advanced values ---
                 IgnoreCertCheckBox.IsChecked = _connectionToEdit.RdpIgnoreCert;
@@ -81,6 +91,7 @@ namespace RDSSH.Views
                 var selectedCredential = (CredentialModel)CredentialComboBox.SelectedItem;
                 var protocol = ((ComboBoxItem)ThemeComboBox.SelectedItem)?.Content?.ToString() ?? "RDP";
 
+                // WICHTIG: target zuerst deklarieren
                 HostlistModel target = _connectionToEdit ?? new HostlistModel();
 
                 target.Protocol = protocol;
@@ -88,6 +99,11 @@ namespace RDSSH.Views
                 target.DisplayName = (DisplaynameTextBox.Text ?? "").Trim();
                 target.Hostname = (HostnameTextBox.Text ?? "").Trim();
                 target.Domain = (DomainTextBox.Text ?? "").Trim();
+
+                // >>> FIX: Eindeutige Zuordnung (GUID), damit gleiche Usernames nicht kollidieren
+                target.CredentialId = selectedCredential.ID;
+
+                // optional weiter befüllen (Anzeige / Backward compatibility)
                 target.Username = selectedCredential.Username;
 
                 // --- Persist advanced settings ---
@@ -114,7 +130,6 @@ namespace RDSSH.Views
                 System.Diagnostics.Debug.WriteLine($"Error: {ex}");
             }
         }
-
 
         private void ThemeComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
         {
