@@ -746,6 +746,10 @@ public sealed partial class SessionsPage : Page
 
             try
             {
+                // pwd kommt aus vaultCred.Password
+                bool hasPassword = !string.IsNullOrEmpty(pwd);
+
+
                 // Connect ebenfalls auf UI Thread
                 await EnqueueAsync(DispatcherQueue, () =>
                 {
@@ -754,16 +758,24 @@ public sealed partial class SessionsPage : Page
                     port: port,
                     username: connectUser,
                     domain: connectDomain,
-                    password: null,          // absichtlich null -> Prompt
+
+                    // nur dann Passwort übergeben, wenn vorhanden
+                    password: hasPassword ? pwd : null,
+
                     desktopWidth: width,
                     desktopHeight: height,
-                    promptForCreds: true,
+
+                    // Prompt nur, wenn KEIN Passwort vorhanden ist
+                    promptForCreds: !hasPassword,
+
                     redirectClipboard: connection.RdpClipboard,
                     enableCredSsp: true,
                     ignoreCert: connection.RdpIgnoreCert
-);
-
+                    );
                 });
+
+                // Referenz früh loswerden (kein “sicheres Löschen”, aber reduziert Lebensdauer)
+                pwd = null;
 
                 Debug.WriteLine("StartRDPConnection (MSRDP): Connect() called.");
             }

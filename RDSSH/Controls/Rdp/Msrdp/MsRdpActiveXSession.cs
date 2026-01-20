@@ -31,7 +31,7 @@ namespace RDSSH.Controls.Rdp.Msrdp
             int port,
             string username,
             string? domain,
-            string? password,           // aktuell prompt mode ok
+            string? password,
             int desktopWidth,
             int desktopHeight,
             bool fullScreen = false,
@@ -50,6 +50,8 @@ namespace RDSSH.Controls.Rdp.Msrdp
             if (string.IsNullOrWhiteSpace(host))
                 throw new ArgumentException("host empty", nameof(host));
 
+            bool hasPassword = !string.IsNullOrEmpty(password);
+
             // Basis
             Set(_ax, "Server", host);
             Set(_ax, "UserName", username);
@@ -61,11 +63,7 @@ namespace RDSSH.Controls.Rdp.Msrdp
             TrySet(_ax, "DesktopHeight", desktopHeight);
             TrySet(_ax, "FullScreen", fullScreen);
 
-            // PromptForCredentials (falls vorhanden)
-            TrySet(_ax, "PromptForCredentials", promptForCreds);
-
             // ========== SETTINGS: Advanced / Secured ==========
-            // AdvancedSettings (höchste verfügbare Version)
             object? adv = GetBestAdvancedSettings(_ax);
 
             if (adv != null)
@@ -78,22 +76,16 @@ namespace RDSSH.Controls.Rdp.Msrdp
                     TrySet(adv, "AuthenticationLevel", 0);
 
                 // Resize-Verhalten:
-                // 1) SmartSizing: skaliert Inhalt sauber auf Viewport (wie 1Remote „Scale“)
                 TrySet(adv, "SmartSizing", true);
-
-                // 2) EnableDynamicResolution: echte dynamische Auflösung (wenn Server/Client es unterstützt)
-                // Hinweis: Property existiert nicht in allen Versionen -> TrySet ist ok
                 TrySet(adv, "EnableDynamicResolution", true);
 
                 // Hotkeys/WinKey-Unterstützung (Teil 1)
-                // AcceleratorPassthrough sitzt häufig in AdvancedSettings2+
                 TrySet(adv, "AcceleratorPassthrough", 1);
 
                 // Oft hilfreich: Fokus übernehmen
                 TrySet(adv, "GrabFocusOnConnect", true);
             }
 
-            // KeyboardHookMode sitzt in SecuredSettings2 (nicht zuverlässig in AdvancedSettings)
             object? sec = GetBestSecuredSettings(_ax);
             if (sec != null)
             {
@@ -101,8 +93,33 @@ namespace RDSSH.Controls.Rdp.Msrdp
                 TrySet(sec, "KeyboardHookMode", 2);
             }
 
-            // Passwort bewusst NICHT setzen -> Prompt
+            // Prompt-Logik:
+            // - Wenn ein Passwort vorhanden ist: standardmäßig keinen Prompt (Auto-Login)
+            // - Wenn kein Passwort vorhanden ist: promptForCreds entscheidet
+            //
+            // Hinweis: promptForCreds bleibt als "override" sinnvoll:
+            //          Falls du trotz Passwort eine Interaktion willst, setze promptForCreds=true
+            bool effectivePrompt =
+                hasPassword ? promptForCreds /* override */ : promptForCreds;
+
+            // In der Praxis: bei Passwort typischerweise promptForCreds=false übergeben.
+            // Wir erzwingen Auto-Login, wenn Passwort da ist UND promptForCreds==false.
+            TrySet(_ax, "PromptForCredentials", effectivePrompt);
+
+            // Wenn Passwort vorhanden und KEIN Prompt gewünscht -> NonScriptable setzen
+            if (hasPassword && !effectivePrompt)
+            {
+                // NUR NonScriptable (best practice)
+                TrySetNonScriptablePassword(_ax, password!);
+            }
+
             Call(_ax, "Connect");
+
+            // Passwort im Control möglichst sofort wieder verwerfen
+            if (hasPassword)
+            {
+                TryResetNonScriptablePassword(_ax);
+            }
 
             _connected = true;
             Debug.WriteLine("[MsRdpActiveXSession] Connect() called.");
@@ -121,10 +138,6 @@ namespace RDSSH.Controls.Rdp.Msrdp
 
             try
             {
-                // Versuch 1: echte dynamische Auflösung
-                // UpdateSessionDisplaySettings(uint DesktopWidth, uint DesktopHeight,
-                //   uint PhysicalWidth, uint PhysicalHeight, uint Orientation,
-                //   uint DesktopScaleFactor, uint DeviceScaleFactor)
                 Call(_ax, "UpdateSessionDisplaySettings",
                     (uint)width,
                     (uint)height,
@@ -142,7 +155,6 @@ namespace RDSSH.Controls.Rdp.Msrdp
                 Debug.WriteLine($"[MsRdpActiveXSession] UpdateSessionDisplaySettings failed: {ex.Message}");
             }
 
-            // Fallback: versuchen, DesktopWidth/Height anzupassen
             TrySet(_ax, "DesktopWidth", width);
             TrySet(_ax, "DesktopHeight", height);
         }
@@ -150,8 +162,15 @@ namespace RDSSH.Controls.Rdp.Msrdp
         public void Disconnect()
         {
             if (_ax == null) return;
+
+            // defensiv: Passwort immer resetten
+            TryResetNonScriptablePassword(_ax);
+
             try { Call(_ax, "Disconnect"); } catch { }
             _connected = false;
+
+            // nach Disconnect nochmals defensiv
+            TryResetNonScriptablePassword(_ax);
         }
 
         public void Dispose()
@@ -164,6 +183,31 @@ namespace RDSSH.Controls.Rdp.Msrdp
             }
 
             _ax = null;
+        }
+
+        private static void TrySetNonScriptablePassword(object ax, string password)
+        {
+            try
+            {
+                if (ax is IMsRdpClientNonScriptable3 ns3) { ns3.put_ClearTextPassword(password); return; }
+                if (ax is IMsRdpClientNonScriptable2 ns2) { ns2.put_ClearTextPassword(password); return; }
+                if (ax is IMsRdpClientNonScriptable ns1) { ns1.put_ClearTextPassword(password); return; }
+            }
+            catch
+            {
+                // Kein Logging des Passworts. Optional nur technischen Fehler loggen.
+            }
+        }
+
+        private static void TryResetNonScriptablePassword(object ax)
+        {
+            try
+            {
+                if (ax is IMsRdpClientNonScriptable3 ns3) { ns3.ResetPassword(); return; }
+                if (ax is IMsRdpClientNonScriptable2 ns2) { ns2.ResetPassword(); return; }
+                if (ax is IMsRdpClientNonScriptable ns1) { ns1.ResetPassword(); return; }
+            }
+            catch { }
         }
 
         private static object? GetBestAdvancedSettings(object ax)
