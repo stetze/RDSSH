@@ -94,6 +94,7 @@ public sealed partial class SessionsPage : Page
     private sealed class ActiveRdpSession
     {
         public MsRdpActiveXSession Ax = default!;
+        public IntPtr ChildHwnd;
     }
 
     private readonly Dictionary<HostlistModel, ActiveRdpSession> _activeRdp
@@ -550,9 +551,27 @@ public sealed partial class SessionsPage : Page
             await EnqueueAsync(DispatcherQueue, () =>
             {
                 ax.Initialize(childHwnd);
+
+                ax.Disconnected += (_, reason) =>
+                {
+                    _ = DispatcherQueue.TryEnqueue(() =>
+                    {
+                        try
+                        {
+                            if (_activeRdp.TryGetValue(connection, out var active) && active.ChildHwnd == childHwnd)
+                                _activeRdp.Remove(connection);
+
+                            SessionsHostWindow.Current?.CloseTabByChildHwnd(childHwnd);
+                        }
+                        catch (Exception ex)
+                        {
+                            Debug.WriteLine($"[SessionsPage] Auto-close tab failed: {ex.Message}");
+                        }
+                    });
+                };
             });
 
-            var session = new ActiveRdpSession { Ax = ax };
+            var session = new ActiveRdpSession { Ax = ax, ChildHwnd = childHwnd };
             _activeRdp[connection] = session;
 
             // Resize-Bridge (wieder in Pixeln, nicht in DIPs)

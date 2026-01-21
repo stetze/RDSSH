@@ -7,6 +7,15 @@ namespace RDSSH.Controls.Rdp.Msrdp
 {
     public sealed class MsRdpActiveXSession : IDisposable
     {
+        private static readonly Guid IMsTscAxEvents_Iid = new("336D5562-EFA8-482E-8CB3-C5C0FC7A7DB6");
+        private const int DISPID_OnDisconnected = 4;
+
+        private Action<int>? _onDisconnectedHandler;
+        private bool _eventsHooked;
+
+        public event EventHandler<int>? Disconnected;
+
+
         private object? _ax;
         private bool _connected;
 
@@ -24,6 +33,7 @@ namespace RDSSH.Controls.Rdp.Msrdp
 
             _ax = control;
             Debug.WriteLine($"[MsRdpActiveXSession] ActiveX resolved. Type={_ax.GetType().FullName}");
+            HookComEvents();
         }
 
         public void Connect(
@@ -178,8 +188,46 @@ namespace RDSSH.Controls.Rdp.Msrdp
             TryResetNonScriptablePassword(_ax);
         }
 
+
+        private void HookComEvents()
+        {
+            if (_eventsHooked || _ax is null)
+                return;
+
+            try
+            {
+                _onDisconnectedHandler = reason =>
+                {
+                    try { Debug.WriteLine($"[MsRdpActiveXSession] OnDisconnected({reason})"); } catch { }
+                    Disconnected?.Invoke(this, reason);
+                };
+
+                ComEventsHelper.Combine(_ax, IMsTscAxEvents_Iid, DISPID_OnDisconnected, _onDisconnectedHandler);
+                _eventsHooked = true;
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"[MsRdpActiveXSession] HookComEvents failed: {ex.Message}");
+            }
+        }
+
+        private void UnhookComEvents()
+        {
+            if (!_eventsHooked || _ax is null || _onDisconnectedHandler is null)
+                return;
+
+            try { ComEventsHelper.Remove(_ax, IMsTscAxEvents_Iid, DISPID_OnDisconnected, _onDisconnectedHandler); }
+            catch { }
+            finally
+            {
+                _eventsHooked = false;
+                _onDisconnectedHandler = null;
+            }
+        }
+
         public void Dispose()
         {
+            UnhookComEvents();
             try { Disconnect(); } catch { }
 
             if (_ax != null && Marshal.IsComObject(_ax))

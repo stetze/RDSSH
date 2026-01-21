@@ -2,6 +2,7 @@ using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using RDSSH.Controls;
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using WinRT.Interop;
@@ -10,9 +11,16 @@ namespace RDSSH.Views
 {
     public sealed partial class SessionsHostWindow : Window
     {
+        public static SessionsHostWindow? Current { get; private set; }
+
+        private readonly Dictionary<long, TabViewItem> _tabsByChildHwnd = new();
+        private bool _isClosing;
+
         public SessionsHostWindow()
         {
+            Current = this;
             InitializeComponent();
+            this.Closed += (_, __) => _isClosing = true;
         }
 
         public NativeChildHwndHost AddRdpTab(string title)
@@ -41,7 +49,12 @@ namespace RDSSH.Views
             SessionsTabView.SelectedItem = tab;
 
             host.ChildHwndCreated += (_, hwnd) =>
+            {
                 Debug.WriteLine($"[SessionsHostWindow] Child HWND created: 0x{hwnd:X}");
+                var key = hwnd.ToInt64();
+                tab.Tag = key;
+                _tabsByChildHwnd[key] = tab;
+            };
 
             return host;
         }
@@ -57,7 +70,6 @@ namespace RDSSH.Views
 
         private const int SW_SHOW = 5;
         private const int SW_RESTORE = 9;
-
         public void BringToFront()
         {
             try
@@ -81,23 +93,54 @@ namespace RDSSH.Views
                 try { SetForegroundWindow(WindowNative.GetWindowHandle(this)); } catch { }
             }
         }
+        public void CloseTabByChildHwnd(IntPtr childHwnd)
+        {
+            DispatcherQueue.TryEnqueue(() =>
+            {
+                var key = childHwnd.ToInt64();
+                if (_tabsByChildHwnd.TryGetValue(key, out var tab))
+                    CloseTabInternal(tab);
+            });
+        }
+        private void CloseHostWindowIfEmpty()
+        {
+            try
+            {
+                if (_isClosing)
+                    return;
 
+                if (SessionsTabView != null && SessionsTabView.TabItems.Count == 0)
+                {
+                    _isClosing = true;
+
+                   this.Close();
+                }
+            }
+            catch { }
+        }
+        private void CloseTabInternal(TabViewItem tab)
+        {
+            SessionsTabView.TabItems.Remove(tab);
+
+            if (tab.Content is Grid grid && grid.Children.Count > 0 && grid.Children[0] is NativeChildHwndHost host)
+            {
+                _tabsByChildHwnd.Remove(host.ChildHwnd.ToInt64());
+                host.Dispose();
+            }
+            else if (tab.Tag is long hwnd)
+            {
+                _tabsByChildHwnd.Remove(hwnd);
+            }
+
+            // Wenn keine Tabs mehr vorhanden sind, Host-Window sauber schließen.
+            CloseHostWindowIfEmpty();
+        }
         private void SessionsTabView_TabCloseRequested(TabView sender, TabViewTabCloseRequestedEventArgs args)
         {
             if (args.Item is not TabViewItem tvi)
                 return;
 
-            try
-            {
-                // Content ist Grid -> Host ist Child[0]
-                if (tvi.Content is Grid g && g.Children.Count > 0 && g.Children[0] is IDisposable d1)
-                    d1.Dispose();
-                else if (tvi.Content is IDisposable d2)
-                    d2.Dispose();
-            }
-            catch { }
-
-            sender.TabItems.Remove(tvi);
+            CloseTabInternal(tvi);
         }
     }
 }
