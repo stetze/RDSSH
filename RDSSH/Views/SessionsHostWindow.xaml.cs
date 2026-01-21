@@ -70,6 +70,7 @@ namespace RDSSH.Views
 
         private const int SW_SHOW = 5;
         private const int SW_RESTORE = 9;
+
         public void BringToFront()
         {
             try
@@ -93,6 +94,8 @@ namespace RDSSH.Views
                 try { SetForegroundWindow(WindowNative.GetWindowHandle(this)); } catch { }
             }
         }
+
+
         public void CloseTabByChildHwnd(IntPtr childHwnd)
         {
             DispatcherQueue.TryEnqueue(() =>
@@ -102,22 +105,50 @@ namespace RDSSH.Views
                     CloseTabInternal(tab);
             });
         }
+
         private void CloseHostWindowIfEmpty()
+
+
         {
+
+
             try
+
+
             {
+
+
                 if (_isClosing)
+
+
                     return;
 
+
                 if (SessionsTabView != null && SessionsTabView.TabItems.Count == 0)
+
+
                 {
+
+
                     _isClosing = true;
 
-                   this.Close();
+
+                    this.Close();
+
+
                 }
+
+
             }
+
+
             catch { }
+
+
         }
+
+
+
         private void CloseTabInternal(TabViewItem tab)
         {
             SessionsTabView.TabItems.Remove(tab);
@@ -135,6 +166,7 @@ namespace RDSSH.Views
             // Wenn keine Tabs mehr vorhanden sind, Host-Window sauber schlieﬂen.
             CloseHostWindowIfEmpty();
         }
+
         private void SessionsTabView_TabCloseRequested(TabView sender, TabViewTabCloseRequestedEventArgs args)
         {
             if (args.Item is not TabViewItem tvi)
