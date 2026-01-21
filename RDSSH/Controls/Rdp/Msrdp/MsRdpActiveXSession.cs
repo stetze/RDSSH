@@ -84,13 +84,18 @@ namespace RDSSH.Controls.Rdp.Msrdp
 
                 // Oft hilfreich: Fokus übernehmen
                 TrySet(adv, "GrabFocusOnConnect", true);
+                // Wichtig für WIN-Taste / WIN+R usw.
+                TrySet(adv, "EnableWindowsKey", 1);
             }
 
             object? sec = GetBestSecuredSettings(_ax);
             if (sec != null)
             {
-                // 0=local, 1=remote nur full screen, 2=remote immer
-                TrySet(sec, "KeyboardHookMode", 2);
+                // KeyboardHookMode:
+                // 0 = immer lokal (Hotkeys bleiben am Client)
+                // 1 = Hotkeys immer an Remote weiterleiten (auch Windowed)
+                // 2 = Hotkeys nur im Fullscreen an Remote weiterleiten
+                TrySet(sec, "KeyboardHookMode", 1);
             }
 
             // Prompt-Logik:

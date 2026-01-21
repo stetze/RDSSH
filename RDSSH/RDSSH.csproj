@@ -54,12 +54,6 @@
     <None Update="appsettings.json">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </None>
-    <None Update="FreeRDP\sdl3-freerdp.exe">
-      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
-    </None>
-    <None Update="FreeRDP\wfreerdp.exe">
-      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
-    </None>
     <None Update="Views\DevicesPage.xaml">
       <Generator>MSBuild:Compile</Generator>
     </None>
@@ -105,8 +99,4 @@
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </Content>
   </ItemGroup>
-  
-  <Target Name="PostBuild" AfterTargets="PostBuildEvent">
-    <Exec Command="set APPXDIR=$(OutDir)AppX\&#xD;&#xA;if not exist &quot;%25APPXDIR%25&quot; set APPXDIR=$(OutDir)&#xD;&#xA;&#xD;&#xA;REM --- Ihre Native DLL aus dem Solution-Output ---&#xD;&#xA;xcopy /y /d &quot;$(SolutionDir)x64\$(Configuration)\RdpEngine.Native.dll&quot; &quot;%25APPXDIR%25&quot;&#xD;&#xA;&#xD;&#xA;REM --- FreeRDP + Abhängigkeiten aus vcpkg ---&#xD;&#xA;set VCPKGBIN=C:\install\vcpkg-master\installed\x64-windows\bin&#xD;&#xA;&#xD;&#xA;xcopy /y /d &quot;%25VCPKGBIN%25\freerdp3.dll&quot; &quot;%25APPXDIR%25&quot;&#xD;&#xA;xcopy /y /d &quot;%25VCPKGBIN%25\winpr3.dll&quot; &quot;%25APPXDIR%25&quot;&#xD;&#xA;xcopy /y /d &quot;%25VCPKGBIN%25\zlib1.dll&quot; &quot;%25APPXDIR%25&quot;&#xD;&#xA;xcopy /y /d &quot;%25VCPKGBIN%25\libssl-3-x64.dll&quot; &quot;%25APPXDIR%25&quot;&#xD;&#xA;xcopy /y /d &quot;%25VCPKGBIN%25\libcrypto-3-x64.dll&quot; &quot;%25APPXDIR%25&quot;&#xD;&#xA;xcopy /y /d &quot;%25VCPKGBIN%25\cjson.dll&quot; &quot;%25APPXDIR%25&quot;&#xD;&#xA;" />
-  </Target>
 </Project>
