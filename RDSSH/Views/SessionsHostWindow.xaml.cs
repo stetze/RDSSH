@@ -20,6 +20,7 @@ namespace RDSSH.Views
         {
             Current = this;
             InitializeComponent();
+            AppWindow.SetIcon(Path.Combine(AppContext.BaseDirectory, "Assets/WindowIcon.ico"));
             this.Closed += (_, __) => _isClosing = true;
         }
 

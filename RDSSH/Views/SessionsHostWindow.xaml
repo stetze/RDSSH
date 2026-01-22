@@ -9,7 +9,7 @@
     xmlns:muxc="using:Microsoft.UI.Xaml.Controls"
     xmlns:native="using:RDSSH.Controls"
     mc:Ignorable="d"
-    Title="SessionsHostWindow">
+    Title="RDSSH">
 
     <Window.SystemBackdrop>
         <MicaBackdrop />
@@ -24,9 +24,10 @@
                       Grid.Row="0"
                       HorizontalAlignment="Stretch"
                       VerticalAlignment="Stretch"
-                      TabWidthMode="Equal"
-                      IsAddTabButtonVisible="False"
-                      Margin="12"
-                      TabCloseRequested="SessionsTabView_TabCloseRequested" />
+                      TabWidthMode="SizeToContent"
+                      IsAddTabButtonVisible="True"
+                      Margin="6"
+                      TabCloseRequested="SessionsTabView_TabCloseRequested"
+                      />
     </Grid>
 </Window>
