@@ -6,6 +6,9 @@ using RDSSH.Models;
 using System;
 using RDSSH.Services;
 using System.Linq;
+using System.IO;
+using System.Collections.Generic;
+
 
 namespace RDSSH.Services
 {
@@ -34,6 +37,9 @@ namespace RDSSH.Services
                 string json = JsonSerializer.Serialize(Hostlist, options);
 
                 await FileIO.WriteTextAsync(file, json);
+
+                // PowerToys Search Index exportieren
+                await ExportSearchIndexAsync();
                 System.Diagnostics.Debug.WriteLine($"Connections saved successfully to {file.Path}");
             }
             catch (Exception ex)
@@ -92,7 +98,9 @@ namespace RDSSH.Services
                     Hostlist.Add(connection);
                 }
 
+                await ExportSearchIndexAsync();
                 System.Diagnostics.Debug.WriteLine($"Connections loaded successfully from {file.Path}");
+               
             }
             catch (Exception ex)
             {
@@ -100,6 +108,47 @@ namespace RDSSH.Services
             }
         }
 
+        private async Task ExportSearchIndexAsync()
+        {
 
+            System.Diagnostics.Debug.WriteLine("ExportSearchIndexAsync() called");
+
+            try
+            {
+                var index = new ConnectionIndexFile
+                {
+                    Connections = Hostlist.Select(h => new ConnectionIndexEntry
+                    {
+                        Id = h.ConnectionId,
+                        Title = h.Title,
+                        Hostname = h.Hostname ?? "",
+                        Protocol = h.Protocol,
+                        Port = h.Port
+                    }).ToList()
+                };
+
+                var json = JsonSerializer.Serialize(index, new JsonSerializerOptions
+                {
+                    WriteIndented = true
+                });
+
+                // MSIX-konform: LocalState der App (...\Packages\<PFN>\LocalState)
+                var baseDir = ApplicationData.Current.LocalFolder.Path;
+                var path = Path.Combine(baseDir, "connections.index.json");
+
+                var tmp = path + ".tmp";
+
+                await File.WriteAllTextAsync(tmp, json);
+                File.Move(tmp, path, overwrite: true);
+
+                System.Diagnostics.Debug.WriteLine("Index written to: " + path);
+
+                System.Diagnostics.Debug.WriteLine($"Search index exported: {path}");
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"Search index export failed: {ex}");
+            }
+        }
     }
 }
