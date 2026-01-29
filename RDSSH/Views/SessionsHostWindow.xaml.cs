@@ -107,6 +107,19 @@ namespace RDSSH.Views
             });
         }
 
+
+        public void FocusTabByChildHwnd(IntPtr childHwnd)
+        {
+            DispatcherQueue.TryEnqueue(() =>
+            {
+                var key = childHwnd.ToInt64();
+                if (_tabsByChildHwnd.TryGetValue(key, out var tab))
+                {
+                    SessionsTabView.SelectedItem = tab;
+                }
+            });
+        }
+
         private void CloseHostWindowIfEmpty()
 
 

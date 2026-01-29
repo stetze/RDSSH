@@ -40,6 +40,7 @@ public sealed partial class SessionsPage : Page
     private readonly ILocalizationService _localizationService;
     private FrameworkElement? _lastRightClickTarget;
     private readonly HostlistService _hostlistService; // resolve service
+    private readonly ConnectionLauncherService _connectionLauncher; // NEW: central RDP/SSH launcher
 
     // Keep these if needed later (not currently required)
     // private readonly HostlistViewModel _viewModel;
@@ -77,6 +78,7 @@ public sealed partial class SessionsPage : Page
         ViewModel = App.GetService<SessionsViewModel>();
         _localizationService = App.GetService<ILocalizationService>();
         _hostlistService = App.GetService<HostlistService>(); // resolve service
+        _connectionLauncher = App.GetService<ConnectionLauncherService>(); // NEW
 
         InitializeComponent();
 
@@ -450,197 +452,9 @@ public sealed partial class SessionsPage : Page
 
     private async void StartRDPConnection(HostlistModel connection)
     {
-        // ====== MSRDP ActiveX IMPLEMENTIERUNG (aktiv) ======
-        try
-        {
-            // Toggle: Wenn schon aktiv -> disconnect
-            if (_activeRdp.TryGetValue(connection, out var existing))
-            {
-                Debug.WriteLine("StartRDPConnection (MSRDP): already connected -> disconnect");
-                await StopRdpSessionAsync(connection, existing);
-                return;
-            }
-
-            connection.IsConnected = true;
-
-            var host = (connection.Hostname ?? "").Trim();
-            var userFromConnection = (connection.Username ?? "").Trim();   // nur Fallback / Anzeige
-            var domainFromConnection = (connection.Domain ?? "").Trim();
-
-            int port = 3389;
-            if (!string.IsNullOrWhiteSpace(connection.Port) &&
-                int.TryParse(connection.Port, out var p) &&
-                p > 0)
-            {
-                port = p;
-            }
-
-            if (string.IsNullOrWhiteSpace(host))
-            {
-                Debug.WriteLine("StartRDPConnection (MSRDP): Host fehlt.");
-                connection.IsConnected = false;
-                return;
-            }
-
-            // >>> Credentials kommen aus deinem CredentialService über CredentialId
-            if (connection.CredentialId == null || connection.CredentialId == Guid.Empty)
-            {
-                Debug.WriteLine("StartRDPConnection (MSRDP): Connection hat keine CredentialId gesetzt.");
-                connection.IsConnected = false;
-                return;
-            }
-
-            var credService = App.GetService<CredentialService>();
-            var vaultCred = credService.ReadVaultCredential(connection.CredentialId.Value);
-
-            if (vaultCred == null)
-            {
-                Debug.WriteLine($"StartRDPConnection (MSRDP): CredentialId {connection.CredentialId} im Vault nicht gefunden.");
-                connection.IsConnected = false;
-                return;
-            }
-
-            // Username/Domain bevorzugt aus Vault; Fallback auf Connection-Felder
-            var vaultUserRaw = !string.IsNullOrWhiteSpace(vaultCred.UserName) ? vaultCred.UserName : userFromConnection;
-
-            // Domain kommt bei dir über Comment (du nutzt Comment als Domain); fallback auf connection.Domain
-            var vaultDomainRaw = !string.IsNullOrWhiteSpace(vaultCred.Comment) ? vaultCred.Comment : domainFromConnection;
-
-            SplitUserAndDomain(vaultUserRaw, vaultDomainRaw, out var connectUser, out var connectDomain);
-
-            // Passwort muss vorhanden sein, sonst gibt es Prompt oder Fail
-            string pwd = vaultCred.Password;
-            if (string.IsNullOrEmpty(pwd))
-            {
-                Debug.WriteLine("StartRDPConnection (MSRDP): Vault-Credential hat kein Passwort (secret ist leer).");
-                connection.IsConnected = false;
-                return;
-            }
-
-            // --- SessionsHostWindow holen + in Vordergrund bringen + Tab erstellen ---
-            var sessionsWindow = App.GetOrCreateSessionsWindow();
-            sessionsWindow.BringToFront();
-
-            var tabTitle =
-            !string.IsNullOrWhiteSpace(connection.DisplayName) ? connection.DisplayName :
-            !string.IsNullOrWhiteSpace(connection.Hostname) ? connection.Hostname :
-            "RDP";
-
-            var hostControl = sessionsWindow.AddRdpTab(tabTitle);
-
-
-            // WICHTIG: erst warten bis Child-HWND existiert
-            var childHwnd = await hostControl.WaitForChildHwndAsync();
-            Debug.WriteLine($"StartRDPConnection (MSRDP): got childHwnd=0x{childHwnd:X}");
-
-            // Pixelgroesse fuer RDP (Skalierung beachten)
-            var scale = hostControl.XamlRoot?.RasterizationScale ?? 1.0;
-            int width = (int)Math.Max(1, Math.Round(hostControl.ActualWidth * scale));
-            int height = (int)Math.Max(1, Math.Round(hostControl.ActualHeight * scale));
-
-            if (width <= 1 || height <= 1)
-            {
-                width = 1280;
-                height = 720;
-            }
-
-            // ActiveX Session erstellen (UI Thread empfohlen)
-            var ax = new MsRdpActiveXSession();
-
-            // Falls du EnqueueAsync hast, nutze es. Sonst direkt aufrufen (nur wenn UI-Thread).
-            await EnqueueAsync(DispatcherQueue, () =>
-            {
-                ax.Initialize(childHwnd);
-
-                ax.Disconnected += (_, reason) =>
-                {
-                    _ = DispatcherQueue.TryEnqueue(() =>
-                    {
-                        try
-                        {
-                            if (_activeRdp.TryGetValue(connection, out var active) && active.ChildHwnd == childHwnd)
-                                _activeRdp.Remove(connection);
-
-                            SessionsHostWindow.Current?.CloseTabByChildHwnd(childHwnd);
-                        }
-                        catch (Exception ex)
-                        {
-                            Debug.WriteLine($"[SessionsPage] Auto-close tab failed: {ex.Message}");
-                        }
-                    });
-                };
-            });
-
-            var session = new ActiveRdpSession { Ax = ax, ChildHwnd = childHwnd };
-            _activeRdp[connection] = session;
-
-            // Resize-Bridge (wieder in Pixeln, nicht in DIPs)
-            hostControl.BoundsUpdated += (_, __) =>
-            {
-                try
-                {
-                    var scale2 = hostControl.XamlRoot?.RasterizationScale ?? 1.0;
-                    var w = (int)Math.Max(1, Math.Round(hostControl.ActualWidth * scale2));
-                    var h = (int)Math.Max(1, Math.Round(hostControl.ActualHeight * scale2));
-
-                    session.Ax.UpdateDisplay(w, h);
-                }
-                catch { }
-            };
-
-            try
-            {
-                // pwd kommt aus vaultCred.Password
-                bool hasPassword = !string.IsNullOrEmpty(pwd);
-
-
-                // Connect ebenfalls auf UI Thread
-                await EnqueueAsync(DispatcherQueue, () =>
-                {
-                    session.Ax.Connect(
-                    host: host,
-                    port: port,
-                    username: connectUser,
-                    domain: connectDomain,
-
-                    // nur dann Passwort übergeben, wenn vorhanden
-                    password: hasPassword ? pwd : null,
-
-                    desktopWidth: width,
-                    desktopHeight: height,
-
-                    // Prompt nur, wenn KEIN Passwort vorhanden ist
-                    promptForCreds: !hasPassword,
-
-                    redirectClipboard: connection.RdpClipboard,
-                    enableCredSsp: true,
-                    ignoreCert: connection.RdpIgnoreCert
-                    );
-                });
-
-                // Referenz früh loswerden (kein “sicheres Löschen”, aber reduziert Lebensdauer)
-                pwd = null;
-
-                Debug.WriteLine("StartRDPConnection (MSRDP): Connect() called.");
-            }
-            finally
-            {
-                pwd = string.Empty;
-            }
-        }
-        catch (Exception ex)
-        {
-            Debug.WriteLine($"Error in StartRDPConnection (MSRDP): {ex}");
-            connection.IsConnected = false;
-
-            if (_activeRdp.TryGetValue(connection, out var s))
-            {
-                try { s.Ax?.Dispose(); } catch { }
-                _activeRdp.Remove(connection);
-            }
-
-            throw;
-        }
+        // NOTE: RDP launch logic moved to ConnectionLauncherService so it can be reused by
+        // app activation (Custom URI scheme) and UI interactions.
+        await _connectionLauncher.StartRdpAsync(connection);
     }
 
     // >>> GEÄNDERT: Stop für ActiveX

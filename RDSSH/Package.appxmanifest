@@ -10,70 +10,77 @@
   xmlns:desktop="http://schemas.microsoft.com/appx/manifest/desktop/windows10"
   IgnorableNamespaces="uap rescap genTemplate">
 
-  <Identity
-    Name="63273stetze.RDSSH"
-    Publisher="CN=D59F340D-0444-48EF-A755-9C19D91350BA"
-    Version="1.0.0.0" />
-    
-  <mp:PhoneIdentity PhoneProductId="02693662-383d-4508-8f56-0c9767026f29" PhonePublisherId="00000000-0000-0000-0000-000000000000"/>
-    
-  <Properties>
-    <DisplayName>RDSSH</DisplayName>
-    <PublisherDisplayName>stetze</PublisherDisplayName>
-    <Logo>Assets\StoreLogo.png</Logo>
-  </Properties>
+	<Identity
+	  Name="63273stetze.RDSSH"
+	  Publisher="CN=D59F340D-0444-48EF-A755-9C19D91350BA"
+	  Version="1.0.0.0" />
 
-  <Dependencies>
-    <TargetDeviceFamily Name="Windows.Universal" MinVersion="10.0.17763.0" MaxVersionTested="10.0.19041.0" />
-    <TargetDeviceFamily Name="Windows.Desktop" MinVersion="10.0.17763.0" MaxVersionTested="10.0.19041.0" />
-  </Dependencies>
+	<mp:PhoneIdentity PhoneProductId="02693662-383d-4508-8f56-0c9767026f29" PhonePublisherId="00000000-0000-0000-0000-000000000000"/>
 
-  <Resources>
-    <Resource Language="x-generate"/>
-  </Resources>
+	<Properties>
+		<DisplayName>RDSSH</DisplayName>
+		<PublisherDisplayName>stetze</PublisherDisplayName>
+		<Logo>Assets\StoreLogo.png</Logo>
+	</Properties>
 
-  <Applications>
-    <Application Id="App"
-      Executable="$targetnametoken$.exe"
-      EntryPoint="$targetentrypoint$">
-      <uap:VisualElements
-        Description="Ein einfacher Remotedesktop / SSH Manager"
-        BackgroundColor="transparent"
-        Square150x150Logo="Assets\Square150x150Logo.png"
-        Square44x44Logo="Assets\Square44x44Logo.png" DisplayName="RDSSH">
-        <uap:DefaultTile Wide310x150Logo="Assets\Wide310x150Logo.png"  Square71x71Logo="Assets\SmallTile.png" Square310x310Logo="Assets\LargeTile.png"/>
-        <uap:SplashScreen Image="Assets\SplashScreen.png" />
-      </uap:VisualElements>
-      <Extensions>
-          <desktop:Extension Category="windows.toastNotificationActivation">
-              <desktop:ToastNotificationActivation ToastActivatorCLSID="630fc2da-ba46-40af-a38e-5c786bfccd13" />
-          </desktop:Extension>
+	<Dependencies>
+		<TargetDeviceFamily Name="Windows.Universal" MinVersion="10.0.17763.0" MaxVersionTested="10.0.19041.0" />
+		<TargetDeviceFamily Name="Windows.Desktop" MinVersion="10.0.17763.0" MaxVersionTested="10.0.19041.0" />
+	</Dependencies>
 
-          <com:Extension Category="windows.comServer">
-              <com:ComServer>
-                  <com:ExeServer Executable="RDSSH.exe" Arguments="----AppNotificationActivated:" DisplayName="Toast activator">
-                      <com:Class Id="630fc2da-ba46-40af-a38e-5c786bfccd13" DisplayName="Toast activator"/>
-                  </com:ExeServer>
-              </com:ComServer>
-          </com:Extension>
-      </Extensions>
-    </Application>
-  </Applications>
+	<Resources>
+		<Resource Language="x-generate"/>
+	</Resources>
 
-  <Capabilities>
-    <rescap:Capability Name="runFullTrust" />
-    <Capability Name="privateNetworkClientServer"/>
-    <Capability Name="internetClient"/>
-  </Capabilities>
+	<Applications>
+		<Application Id="App"
+		  Executable="$targetnametoken$.exe"
+		  EntryPoint="$targetentrypoint$">
+			<uap:VisualElements
+			  Description="Ein einfacher Remotedesktop / SSH Manager"
+			  BackgroundColor="transparent"
+			  Square150x150Logo="Assets\Square150x150Logo.png"
+			  Square44x44Logo="Assets\Square44x44Logo.png" DisplayName="RDSSH">
+				<uap:DefaultTile Wide310x150Logo="Assets\Wide310x150Logo.png"  Square71x71Logo="Assets\SmallTile.png" Square310x310Logo="Assets\LargeTile.png"/>
+				<uap:SplashScreen Image="Assets\SplashScreen.png" />
+			</uap:VisualElements>
+			<Extensions>
+				<desktop:Extension Category="windows.toastNotificationActivation">
+					<desktop:ToastNotificationActivation ToastActivatorCLSID="630fc2da-ba46-40af-a38e-5c786bfccd13" />
+				</desktop:Extension>
 
-  <genTemplate:Metadata>
-    <genTemplate:Item Name="generator" Value="Template Studio"/>
-    <genTemplate:Item Name="wizardVersion" Version="v5.5" />
-    <genTemplate:Item Name="projectType" Value="NavView" />
-    <genTemplate:Item Name="framework" Value="MVVMToolkit" />
-    <genTemplate:Item Name="platform" Value="WinUI" />
-    <genTemplate:Item Name="appmodel" Value="Desktop" />
-  </genTemplate:Metadata>
+				<com:Extension Category="windows.comServer">
+					<com:ComServer>
+						<com:ExeServer Executable="RDSSH.exe" Arguments="----AppNotificationActivated:" DisplayName="Toast activator">
+							<com:Class Id="630fc2da-ba46-40af-a38e-5c786bfccd13" DisplayName="Toast activator"/>
+						</com:ExeServer>
+					</com:ComServer>
+				</com:Extension>
+
+				<uap:Extension Category="windows.protocol">
+					<uap:Protocol Name="rdssh">
+						<uap:DisplayName>RDSSH Protocol</uap:DisplayName>
+					</uap:Protocol>
+				</uap:Extension>
+
+			</Extensions>
+		</Application>
+	</Applications>
+
+	<Capabilities>
+		<rescap:Capability Name="runFullTrust" />
+		<Capability Name="privateNetworkClientServer"/>
+		<Capability Name="internetClient"/>
+	</Capabilities>
+
+	<genTemplate:Metadata>
+		<genTemplate:Item Name="generator" Value="Template Studio"/>
+		<genTemplate:Item Name="wizardVersion" Version="v5.5" />
+		<genTemplate:Item Name="projectType" Value="NavView" />
+		<genTemplate:Item Name="framework" Value="MVVMToolkit" />
+		<genTemplate:Item Name="platform" Value="WinUI" />
+		<genTemplate:Item Name="appmodel" Value="Desktop" />
+	</genTemplate:Metadata>
 </Package>
 
 
