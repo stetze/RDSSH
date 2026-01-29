@@ -56,11 +56,9 @@ namespace RDSSH.Views
                 // --- Load advanced values ---
                 IgnoreCertCheckBox.IsChecked = _connectionToEdit.RdpIgnoreCert;
                 TlsLegacyCheckBox.IsChecked = _connectionToEdit.RdpTlsLegacy;
-                DynamicResolutionCheckBox.IsChecked = _connectionToEdit.RdpDynamicResolution;
                 ClipboardCheckBox.IsChecked = _connectionToEdit.RdpClipboard;
                 AdminModeCheckBox.IsChecked = _connectionToEdit.RdpAdminMode;
                 LoadBalanceInfoTextBox.Text = _connectionToEdit.RdpLoadBalanceInfo ?? "";
-                ExtraArgsTextBox.Text = _connectionToEdit.RdpExtraArgs ?? "";
             }
         }
 
@@ -109,11 +107,9 @@ namespace RDSSH.Views
                 // --- Persist advanced settings ---
                 target.RdpIgnoreCert = IgnoreCertCheckBox.IsChecked == true;
                 target.RdpTlsLegacy = TlsLegacyCheckBox.IsChecked == true;
-                target.RdpDynamicResolution = DynamicResolutionCheckBox.IsChecked == true;
                 target.RdpClipboard = ClipboardCheckBox.IsChecked == true;
                 target.RdpAdminMode = AdminModeCheckBox.IsChecked == true;
                 target.RdpLoadBalanceInfo = (LoadBalanceInfoTextBox.Text ?? "").Trim();
-                target.RdpExtraArgs = (ExtraArgsTextBox.Text ?? "").Trim();
 
                 if (_connectionToEdit == null)
                 {

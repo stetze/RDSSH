@@ -58,11 +58,6 @@
 
                     <TextBlock Text="Anzeige" Style="{StaticResource BodyStrongTextBlockStyle}" Margin="0,12,0,0" />
 
-                    <CheckBox x:Name="DynamicResolutionCheckBox"
-                              Content="Dynamische Auflösung (/dynamic-resolution)"
-                              IsChecked="True"
-                              Margin="0,10,0,0"/>
-
                     <TextBlock Text="Komfort" Style="{StaticResource BodyStrongTextBlockStyle}" Margin="0,12,0,0" />
 
                     <CheckBox x:Name="ClipboardCheckBox"
@@ -81,13 +76,6 @@
                              PlaceholderText="(Optional) tsv://MS Terminal Services Plugin.1...."
                              Margin="0,10,0,0"
                              Width="420"/>
-
-                    <TextBlock Text="Weitere FreeRDP-Argumente" Style="{StaticResource BodyStrongTextBlockStyle}" Margin="0,12,0,0" />
-                    <TextBox x:Name="ExtraArgsTextBox"
-                             PlaceholderText="(Optional) z.B. /sound:sys:wasapi /rfx"
-                             Margin="0,10,0,0"
-                             Width="420"/>
-
                 </StackPanel>
             </Expander>
 

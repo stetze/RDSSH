@@ -2,24 +2,24 @@
 using System.Diagnostics;
 using System.Reflection;
 using System.Runtime.InteropServices;
+using System.Threading;
 
 namespace RDSSH.Controls.Rdp.Msrdp
 {
     public sealed class MsRdpActiveXSession : IDisposable
     {
+        private readonly SynchronizationContext? _ownerContext = SynchronizationContext.Current;
         private static readonly Guid IMsTscAxEvents_Iid = new("336D5562-EFA8-482E-8CB3-C5C0FC7A7DB6");
         private const int DISPID_OnDisconnected = 4;
 
         private Action<int>? _onDisconnectedHandler;
         private bool _eventsHooked;
-
-        public event EventHandler<int>? Disconnected;
-
-
         private object? _ax;
         private bool _connected;
-
+        public bool IsConnected => _connected;
         private static bool _atlInitialized;
+
+        public event EventHandler<int>? Disconnected;
 
         public void Initialize(IntPtr atlAxWinHwnd)
         {
@@ -27,7 +27,6 @@ namespace RDSSH.Controls.Rdp.Msrdp
                 throw new ArgumentException("atlAxWinHwnd is null", nameof(atlAxWinHwnd));
 
             EnsureAtl();
-
             int hr = AtlAxGetControl(atlAxWinHwnd, out object control);
             if (hr < 0) Marshal.ThrowExceptionForHR(hr);
 
@@ -48,105 +47,93 @@ namespace RDSSH.Controls.Rdp.Msrdp
             bool redirectClipboard = true,
             bool promptForCreds = true,
             bool enableCredSsp = true,
-            bool ignoreCert = true)
+            bool ignoreCert = true,
+            string? loadBalanceInfo = null)
         {
             if (_ax == null) throw new InvalidOperationException("Initialize() first.");
             if (_connected) return;
 
-            host = (host ?? "").Trim();
-            username = (username ?? "").Trim();
-            domain = string.IsNullOrWhiteSpace(domain) ? null : domain.Trim();
-
+            host = (host ?? string.Empty).Trim();
+            username = (username ?? string.Empty).Trim();
+            domain = string.IsNullOrWhiteSpace(domain) ? null : domain!.Trim();
             if (string.IsNullOrWhiteSpace(host))
                 throw new ArgumentException("host empty", nameof(host));
 
             bool hasPassword = !string.IsNullOrEmpty(password);
 
-            // Basis
-            Set(_ax, "Server", host);
-            Set(_ax, "UserName", username);
-            if (!string.IsNullOrWhiteSpace(domain))
-                TrySet(_ax, "Domain", domain);
-
-            // Desktop size: muss VOR Connect gesetzt werden
-            TrySet(_ax, "DesktopWidth", desktopWidth);
-            TrySet(_ax, "DesktopHeight", desktopHeight);
-            TrySet(_ax, "FullScreen", fullScreen);
-
-            // ========== SETTINGS: Advanced / Secured ==========
-            object? adv = GetBestAdvancedSettings(_ax);
-
-            if (adv != null)
+            try
             {
-                TrySet(adv, "RDPPort", port);
-                TrySet(adv, "RedirectClipboard", redirectClipboard);
-                TrySet(adv, "EnableCredSspSupport", enableCredSsp);
+                TrySet(_ax, "Server", host);
+                Set(_ax, "UserName", username);
+                if (!string.IsNullOrWhiteSpace(domain))
+                    TrySet(_ax, "Domain", domain);
 
-                if (ignoreCert)
-                    TrySet(adv, "AuthenticationLevel", 0);
+                TrySet(_ax, "DesktopWidth", desktopWidth);
+                TrySet(_ax, "DesktopHeight", desktopHeight);
+                TrySet(_ax, "FullScreen", fullScreen);
 
-                // Resize-Verhalten:
-                TrySet(adv, "SmartSizing", true);
-                TrySet(adv, "EnableDynamicResolution", true);
+                object? adv = GetBestAdvancedSettings(_ax);
+                if (adv != null)
+                {
+                    TrySet(adv, "RDPPort", port);
+                    TrySet(adv, "RedirectClipboard", redirectClipboard);
+                    TrySet(adv, "EnableCredSspSupport", enableCredSsp);
 
-                // Hotkeys/WinKey-Unterstützung (Teil 1)
-                TrySet(adv, "AcceleratorPassthrough", 1);
+                    if (!string.IsNullOrWhiteSpace(loadBalanceInfo))
+                    {
+                        var packed = BuildBrokerLoadBalanceInfoBstr(loadBalanceInfo);
+                        if (!string.IsNullOrEmpty(packed))
+                        {
+                            TrySet(adv, "LoadBalanceInfo", packed);
+                            Debug.WriteLine("[MsRdpActiveXSession] LoadBalanceInfo (tsv packed) applied.");
+                        }
+                    }
 
-                // Oft hilfreich: Fokus übernehmen
-                TrySet(adv, "GrabFocusOnConnect", true);
-                // Wichtig für WIN-Taste / WIN+R usw.
-                TrySet(adv, "EnableWindowsKey", 1);
+                    if (ignoreCert) TrySet(adv, "AuthenticationLevel", 0);
+                    TrySet(adv, "SmartSizing", true);
+                    TrySet(adv, "EnableDynamicResolution", true);
+                    TrySet(adv, "AcceleratorPassthrough", 1);
+                    TrySet(adv, "GrabFocusOnConnect", true);
+                    TrySet(adv, "EnableWindowsKey", 1);
+                }
+
+                object? sec = GetBestSecuredSettings(_ax);
+                if (sec != null)
+                {
+                    // 1 = immer Remote
+                    TrySet(sec, "KeyboardHookMode", 1);
+                }
+
+                bool effectivePrompt = hasPassword ? promptForCreds : promptForCreds;
+                TrySet(_ax, "PromptForCredentials", effectivePrompt);
+
+                if (hasPassword && !effectivePrompt)
+                {
+                    TrySetNonScriptablePassword(_ax, password!);
+                }
+
+                Call(_ax, "Connect");
+
+                if (hasPassword) { TryResetNonScriptablePassword(_ax); }
+
+                _connected = true;
+                Debug.WriteLine("[MsRdpActiveXSession] Connect() called.");
             }
-
-            object? sec = GetBestSecuredSettings(_ax);
-            if (sec != null)
+            catch (COMException ex)
             {
-                // KeyboardHookMode:
-                // 0 = immer lokal (Hotkeys bleiben am Client)
-                // 1 = Hotkeys immer an Remote weiterleiten (auch Windowed)
-                // 2 = Hotkeys nur im Fullscreen an Remote weiterleiten
-                TrySet(sec, "KeyboardHookMode", 1);
+                Debug.WriteLine($"[MsRdpActiveXSession] COMException in Connect: 0x{ex.HResult:X8} {ex}");
+                try { Call(_ax, "Disconnect"); } catch { }
+                _connected = false;
             }
-
-            // Prompt-Logik:
-            // - Wenn ein Passwort vorhanden ist: standardmäßig keinen Prompt (Auto-Login)
-            // - Wenn kein Passwort vorhanden ist: promptForCreds entscheidet
-            //
-            // Hinweis: promptForCreds bleibt als "override" sinnvoll:
-            //          Falls du trotz Passwort eine Interaktion willst, setze promptForCreds=true
-            bool effectivePrompt =
-                hasPassword ? promptForCreds /* override */ : promptForCreds;
-
-            // In der Praxis: bei Passwort typischerweise promptForCreds=false übergeben.
-            // Wir erzwingen Auto-Login, wenn Passwort da ist UND promptForCreds==false.
-            TrySet(_ax, "PromptForCredentials", effectivePrompt);
-
-            // Wenn Passwort vorhanden und KEIN Prompt gewünscht -> NonScriptable setzen
-            if (hasPassword && !effectivePrompt)
-            {
-                // NUR NonScriptable (best practice)
-                TrySetNonScriptablePassword(_ax, password!);
-            }
-
-            Call(_ax, "Connect");
-
-            // Passwort im Control möglichst sofort wieder verwerfen
-            if (hasPassword)
-            {
-                TryResetNonScriptablePassword(_ax);
-            }
-
-            _connected = true;
-            Debug.WriteLine("[MsRdpActiveXSession] Connect() called.");
         }
 
-        /// <summary>
-        /// Resize-Update: bevorzugt UpdateSessionDisplaySettings (Dynamic Resolution),
-        /// Fallback: DesktopWidth/DesktopHeight.
-        /// WICHTIG: Bei COM NICHT per GetMethod suchen, sondern per InvokeMember/IDispatch aufrufen.
-        /// </summary>
         public void UpdateDisplay(int width, int height)
         {
+            if (_ownerContext is not null && SynchronizationContext.Current != _ownerContext)
+            {
+                RunOnOwnerThread(() => UpdateDisplay(width, height), wait: false);
+                return;
+            }
             if (_ax == null) return;
             if (!_connected) return;
             if (width < 1 || height < 1) return;
@@ -154,14 +141,8 @@ namespace RDSSH.Controls.Rdp.Msrdp
             try
             {
                 Call(_ax, "UpdateSessionDisplaySettings",
-                    (uint)width,
-                    (uint)height,
-                    (uint)width,
-                    (uint)height,
-                    (uint)0,
-                    (uint)100,
-                    (uint)100);
-
+                    (uint)width, (uint)height, (uint)width, (uint)height,
+                    (uint)0, (uint)100, (uint)100);
                 Debug.WriteLine($"[MsRdpActiveXSession] UpdateSessionDisplaySettings({width}x{height})");
                 return;
             }
@@ -176,30 +157,93 @@ namespace RDSSH.Controls.Rdp.Msrdp
 
         public void Disconnect()
         {
+            if (_ownerContext is not null && SynchronizationContext.Current != _ownerContext)
+            {
+                RunOnOwnerThread(Disconnect, wait: true);
+                return;
+            }
             if (_ax == null) return;
 
-            // defensiv: Passwort immer resetten
             TryResetNonScriptablePassword(_ax);
-
             try { Call(_ax, "Disconnect"); } catch { }
             _connected = false;
-
-            // nach Disconnect nochmals defensiv
             TryResetNonScriptablePassword(_ax);
         }
 
+        public void Dispose()
+        {
+            if (_ownerContext is not null && SynchronizationContext.Current != _ownerContext)
+            {
+                RunOnOwnerThread(Dispose, wait: true);
+                return;
+            }
+
+            UnhookComEvents();
+            try { Disconnect(); } catch { }
+
+            if (_ax != null && Marshal.IsComObject(_ax))
+            {
+                try { Marshal.FinalReleaseComObject(_ax); } catch { }
+            }
+            _ax = null;
+        }
+
+        private static string? BuildBrokerLoadBalanceInfoBstr(string? raw)
+        {
+            if (string.IsNullOrWhiteSpace(raw))
+                return null;
+
+            var s = raw.Trim();
+
+            const string rdpPrefix = "loadbalanceinfo:s:";
+            if (s.StartsWith(rdpPrefix, StringComparison.OrdinalIgnoreCase))
+                s = s.Substring(rdpPrefix.Length).Trim();
+
+            if (s.StartsWith("cookie:", StringComparison.OrdinalIgnoreCase) &&
+                s.IndexOf("MS Terminal Services Plugin", StringComparison.OrdinalIgnoreCase) >= 0)
+            {
+                var after = s.Substring("cookie:".Length).Trim();
+                s = "tsv://" + after;
+                Debug.WriteLine("[MsRdpActiveXSession] LoadBalanceInfo: converted cookie->tsv: " + s);
+            }
+
+            if (!s.StartsWith("tsv://", StringComparison.OrdinalIgnoreCase))
+            {
+                Debug.WriteLine("[MsRdpActiveXSession] LoadBalanceInfo: non-TSV value passed through as-is.");
+                return s;
+            }
+
+            if ((s.Length % 2) == 1) s += " ";
+            s += "\r\n";
+
+            var bytes = System.Text.Encoding.UTF8.GetBytes(s);
+            if ((bytes.Length % 2) == 1)
+            {
+                var tmp = new byte[bytes.Length + 1];
+                System.Buffer.BlockCopy(bytes, 0, tmp, 0, bytes.Length);
+                tmp[tmp.Length - 1] = (byte)' ';
+                bytes = tmp;
+            }
+
+            var packed = System.Text.Encoding.Unicode.GetString(bytes);
+            Debug.WriteLine("[MsRdpActiveXSession] LoadBalanceInfo (tsv packed) length=" + packed.Length);
+            return packed;
+        }
 
         private void HookComEvents()
         {
-            if (_eventsHooked || _ax is null)
-                return;
+            if (_eventsHooked || _ax is null) return;
 
             try
             {
                 _onDisconnectedHandler = reason =>
                 {
-                    try { Debug.WriteLine($"[MsRdpActiveXSession] OnDisconnected({reason})"); } catch { }
-                    Disconnected?.Invoke(this, reason);
+                    RunOnOwnerThread(() =>
+                    {
+                        _connected = false;
+                        try { Debug.WriteLine($"[MsRdpActiveXSession] OnDisconnected({reason})"); } catch { }
+                        Disconnected?.Invoke(this, reason);
+                    }, wait: false);
                 };
 
                 ComEventsHelper.Combine(_ax, IMsTscAxEvents_Iid, DISPID_OnDisconnected, _onDisconnectedHandler);
@@ -213,8 +257,7 @@ namespace RDSSH.Controls.Rdp.Msrdp
 
         private void UnhookComEvents()
         {
-            if (!_eventsHooked || _ax is null || _onDisconnectedHandler is null)
-                return;
+            if (!_eventsHooked || _ax is null || _onDisconnectedHandler is null) return;
 
             try { ComEventsHelper.Remove(_ax, IMsTscAxEvents_Iid, DISPID_OnDisconnected, _onDisconnectedHandler); }
             catch { }
@@ -225,42 +268,28 @@ namespace RDSSH.Controls.Rdp.Msrdp
             }
         }
 
-        public void Dispose()
+        private void RunOnOwnerThread(Action action, bool wait)
         {
-            UnhookComEvents();
-            try { Disconnect(); } catch { }
+            if (_ownerContext is null) { action(); return; }
+            if (SynchronizationContext.Current == _ownerContext) { action(); return; }
 
-            if (_ax != null && Marshal.IsComObject(_ax))
+            if (!wait)
             {
-                try { Marshal.FinalReleaseComObject(_ax); } catch { }
+                _ownerContext.Post(_ => action(), null);
+                return;
             }
 
-            _ax = null;
-        }
+            Exception? captured = null;
+            using var mre = new ManualResetEventSlim(false);
+            _ownerContext.Post(_ =>
+            {
+                try { action(); }
+                catch (Exception ex) { captured = ex; }
+                finally { mre.Set(); }
+            }, null);
+            mre.Wait();
 
-        private static void TrySetNonScriptablePassword(object ax, string password)
-        {
-            try
-            {
-                if (ax is IMsRdpClientNonScriptable3 ns3) { ns3.put_ClearTextPassword(password); return; }
-                if (ax is IMsRdpClientNonScriptable2 ns2) { ns2.put_ClearTextPassword(password); return; }
-                if (ax is IMsRdpClientNonScriptable ns1) { ns1.put_ClearTextPassword(password); return; }
-            }
-            catch
-            {
-                // Kein Logging des Passworts. Optional nur technischen Fehler loggen.
-            }
-        }
-
-        private static void TryResetNonScriptablePassword(object ax)
-        {
-            try
-            {
-                if (ax is IMsRdpClientNonScriptable3 ns3) { ns3.ResetPassword(); return; }
-                if (ax is IMsRdpClientNonScriptable2 ns2) { ns2.ResetPassword(); return; }
-                if (ax is IMsRdpClientNonScriptable ns1) { ns1.ResetPassword(); return; }
-            }
-            catch { }
+            if (captured is not null) throw captured;
         }
 
         private static object? GetBestAdvancedSettings(object ax)
@@ -280,14 +309,33 @@ namespace RDSSH.Controls.Rdp.Msrdp
         private static object? GetBestSecuredSettings(object ax)
         {
             object? sec = null;
-            foreach (var name in new[]
-            {
-                "SecuredSettings3","SecuredSettings2","SecuredSettings"
-            })
+            foreach (var name in new[] { "SecuredSettings3", "SecuredSettings2", "SecuredSettings" })
             {
                 if (TryGet(ax, name, out sec) && sec != null) return sec;
             }
             return null;
+        }
+
+        private static void TrySetNonScriptablePassword(object ax, string password)
+        {
+            try
+            {
+                if (ax is IMsRdpClientNonScriptable3 ns3) { ns3.put_ClearTextPassword(password); return; }
+                if (ax is IMsRdpClientNonScriptable2 ns2) { ns2.put_ClearTextPassword(password); return; }
+                if (ax is IMsRdpClientNonScriptable ns1) { ns1.put_ClearTextPassword(password); return; }
+            }
+            catch { /* nie Passwort loggen */ }
+        }
+
+        private static void TryResetNonScriptablePassword(object ax)
+        {
+            try
+            {
+                if (ax is IMsRdpClientNonScriptable3 ns3) { ns3.ResetPassword(); return; }
+                if (ax is IMsRdpClientNonScriptable2 ns2) { ns2.ResetPassword(); return; }
+                if (ax is IMsRdpClientNonScriptable ns1) { ns1.ResetPassword(); return; }
+            }
+            catch { }
         }
 
         private static void Set(object target, string name, object? value)

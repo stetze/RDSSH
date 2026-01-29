@@ -399,7 +399,6 @@ public sealed partial class SessionsPage : Page
     {
         var args = new StringBuilder();
 
-        if (c.RdpDynamicResolution) args.Append("/dynamic-resolution ");
         if (c.RdpClipboard) args.Append("/clipboard ");
 
         // NICHT default:

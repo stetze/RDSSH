@@ -32,8 +32,7 @@ namespace RDSSH.Services
 
         public async Task StartRdpAsync(HostlistModel connection)
         {
-            if (connection == null)
-                return;
+            if (connection == null) return;
 
             if (connection.ConnectionId != Guid.Empty &&
                 _activeRdpById.TryGetValue(connection.ConnectionId, out var existing))
@@ -48,8 +47,7 @@ namespace RDSSH.Services
 
         public async Task StartRdpAsync(Guid connectionId)
         {
-            if (connectionId == Guid.Empty)
-                return;
+            if (connectionId == Guid.Empty) return;
 
             if (_hostlistService.Hostlist.Count == 0)
             {
@@ -86,9 +84,9 @@ namespace RDSSH.Services
             {
                 connection.IsConnected = true;
 
-                var host = (connection.Hostname ?? "").Trim();
-                var userFromConnection = (connection.Username ?? "").Trim();
-                var domainFromConnection = (connection.Domain ?? "").Trim();
+                var host = (connection.Hostname ?? string.Empty).Trim(); // Broker-FQDN
+                var userFromConnection = (connection.Username ?? string.Empty).Trim();
+                var domainFromConnection = (connection.Domain ?? string.Empty).Trim();
 
                 int port = 3389;
                 if (!string.IsNullOrWhiteSpace(connection.Port) &&
@@ -121,7 +119,6 @@ namespace RDSSH.Services
 
                 var vaultUserRaw = !string.IsNullOrWhiteSpace(vaultCred.UserName) ? vaultCred.UserName : userFromConnection;
                 var vaultDomainRaw = !string.IsNullOrWhiteSpace(vaultCred.Comment) ? vaultCred.Comment : domainFromConnection;
-
                 SplitUserAndDomain(vaultUserRaw, vaultDomainRaw, out var connectUser, out var connectDomain);
 
                 string pwd = vaultCred.Password;
@@ -136,24 +133,20 @@ namespace RDSSH.Services
                     "RDP";
 
                 var hostControl = sessionsWindow.AddRdpTab(tabTitle);
-
                 var childHwnd = await hostControl.WaitForChildHwndAsync();
 
                 var scale = hostControl.XamlRoot?.RasterizationScale ?? 1.0;
                 int width = (int)Math.Max(1, Math.Round(hostControl.ActualWidth * scale));
                 int height = (int)Math.Max(1, Math.Round(hostControl.ActualHeight * scale));
-                if (width <= 1 || height <= 1)
-                {
-                    width = 1280;
-                    height = 720;
-                }
+                if (width <= 1 || height <= 1) { width = 1280; height = 720; }
 
                 var dispatcher = sessionsWindow.DispatcherQueue;
 
-                var ax = new MsRdpActiveXSession();
-
+                // --- ActiveX auf UI-Thread erzeugen (STA) ---
+                MsRdpActiveXSession ax = null!;
                 await EnqueueAsync(dispatcher, () =>
                 {
+                    ax = new MsRdpActiveXSession();
                     ax.Initialize(childHwnd);
 
                     ax.Disconnected += (_, __) =>
@@ -170,6 +163,7 @@ namespace RDSSH.Services
                                 }
 
                                 SessionsHostWindow.Current?.CloseTabByChildHwnd(childHwnd);
+                                try { ax?.Dispose(); } catch { }
                             }
                             catch (Exception ex)
                             {
@@ -191,10 +185,9 @@ namespace RDSSH.Services
                 };
 
                 if (connection.ConnectionId != Guid.Empty)
-                {
                     _activeRdpById[connection.ConnectionId] = session;
-                }
 
+                // Resize nur solange verbunden
                 hostControl.BoundsUpdated += (_, __) =>
                 {
                     try
@@ -202,11 +195,13 @@ namespace RDSSH.Services
                         var scale2 = hostControl.XamlRoot?.RasterizationScale ?? 1.0;
                         var w = (int)Math.Max(1, Math.Round(hostControl.ActualWidth * scale2));
                         var h = (int)Math.Max(1, Math.Round(hostControl.ActualHeight * scale2));
-                        session.Ax.UpdateDisplay(w, h);
+                        if (session.Ax != null && session.Ax.IsConnected)
+                            session.Ax.UpdateDisplay(w, h);
                     }
                     catch { }
                 };
 
+                // Connect (UI-Thread)
                 await EnqueueAsync(dispatcher, () =>
                 {
                     session.Ax.Connect(
@@ -220,10 +215,12 @@ namespace RDSSH.Services
                         promptForCreds: !hasPassword,
                         redirectClipboard: connection.RdpClipboard,
                         enableCredSsp: true,
-                        ignoreCert: connection.RdpIgnoreCert
+                        ignoreCert: connection.RdpIgnoreCert,
+                        loadBalanceInfo: connection.RdpLoadBalanceInfo
                     );
                 });
 
+                // Passwort leeren
                 pwd = string.Empty;
             }
             catch (Exception ex)
@@ -244,7 +241,7 @@ namespace RDSSH.Services
 
         private static void SplitUserAndDomain(string inputUser, string? inputDomain, out string user, out string? domain)
         {
-            user = (inputUser ?? "").Trim();
+            user = (inputUser ?? string.Empty).Trim();
             domain = string.IsNullOrWhiteSpace(inputDomain) ? null : inputDomain.Trim();
 
             var bs = user.IndexOf('\\');
@@ -252,10 +249,7 @@ namespace RDSSH.Services
             {
                 var d = user.Substring(0, bs);
                 var u = user.Substring(bs + 1);
-
-                if (string.IsNullOrWhiteSpace(domain))
-                    domain = d;
-
+                if (string.IsNullOrWhiteSpace(domain)) domain = d;
                 user = u;
                 return;
             }
@@ -265,10 +259,7 @@ namespace RDSSH.Services
             {
                 var u = user.Substring(0, at);
                 var d = user.Substring(at + 1);
-
-                if (string.IsNullOrWhiteSpace(domain))
-                    domain = d;
-
+                if (string.IsNullOrWhiteSpace(domain)) domain = d;
                 user = u;
             }
         }
@@ -276,20 +267,11 @@ namespace RDSSH.Services
         private static Task EnqueueAsync(DispatcherQueue queue, Action action)
         {
             var tcs = new TaskCompletionSource();
-
             queue.TryEnqueue(() =>
             {
-                try
-                {
-                    action();
-                    tcs.SetResult();
-                }
-                catch (Exception ex)
-                {
-                    tcs.SetException(ex);
-                }
+                try { action(); tcs.SetResult(); }
+                catch (Exception ex) { tcs.SetException(ex); }
             });
-
             return tcs.Task;
         }
     }
