@@ -49,6 +49,18 @@ namespace RDSSH.Controls
             VerticalAlignment = VerticalAlignment.Stretch;
         }
 
+        // Reparent the hosted child window to a new top-level HWND (e.g., when undocking)
+        public void ReparentTo(IntPtr newTopLevelHwnd)
+        {
+            if (_disposed) return;
+            if (_childHwnd == IntPtr.Zero) return;
+            if (newTopLevelHwnd == IntPtr.Zero) return;
+
+            SetParent(_childHwnd, newTopLevelHwnd);
+            _topLevelHwnd = newTopLevelHwnd;
+            UpdateBounds();
+        }
+
         private void OnPointerPressed(object sender, PointerRoutedEventArgs e)
         {
             if (_disposed) return;
@@ -231,6 +243,9 @@ namespace RDSSH.Controls
             int exStyle, string className, string windowName, int style,
             int x, int y, int width, int height,
             IntPtr parent, IntPtr menu, IntPtr instance, IntPtr param);
+
+        [DllImport("user32.dll")]
+        private static extern IntPtr SetParent(IntPtr hWndChild, IntPtr hWndNewParent);
 
         [DllImport("user32.dll", SetLastError = true)]
         private static extern bool DestroyWindow(IntPtr hWnd);

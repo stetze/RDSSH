@@ -41,6 +41,19 @@ public class ThemeSelectorService : IThemeSelectorService
             TitleBarHelper.UpdateTitleBar(Theme);
         }
 
+        // Also apply theme to the sessions window if it exists so it follows the app theme
+        try
+        {
+            if (App.SessionsWindow?.Content is FrameworkElement sessionsRoot)
+            {
+                sessionsRoot.RequestedTheme = Theme;
+            }
+        }
+        catch
+        {
+            // ignore
+        }
+
         await Task.CompletedTask;
     }
 

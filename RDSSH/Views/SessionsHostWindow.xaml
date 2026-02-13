@@ -17,17 +17,25 @@
 
     <Grid>
         <Grid.RowDefinitions>
+            <!-- small title row -->
+            <RowDefinition Height="22"/>
             <RowDefinition Height="*"/>
         </Grid.RowDefinitions>
 
+        <!-- TabView fills the whole area; no left margin so there's no visible gap on the left -->
         <muxc:TabView x:Name="SessionsTabView"
                       Grid.Row="0"
+                      Grid.RowSpan="2"
                       HorizontalAlignment="Stretch"
                       VerticalAlignment="Stretch"
                       TabWidthMode="SizeToContent"
                       IsAddTabButtonVisible="True"
-                      Margin="6"
+                      Margin="0"
+                      Padding="8,0,0,0"
                       TabCloseRequested="SessionsTabView_TabCloseRequested"
                       />
+
+        <!-- Drag overlay: full-width overlay that will be shifted to start right of the tab headers at runtime -->
+        <Border Grid.Row="0" Background="Transparent" x:Name="DragOverlay" Height="20" HorizontalAlignment="Left" />
     </Grid>
 </Window>

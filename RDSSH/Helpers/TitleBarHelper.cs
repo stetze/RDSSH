@@ -85,6 +85,76 @@ internal class TitleBarHelper
         }
     }
 
+    // Overload to apply the same title bar styling to an arbitrary Window
+    public static void UpdateTitleBar(Window window, ElementTheme theme)
+    {
+        try
+        {
+            if (!window.ExtendsContentIntoTitleBar)
+                return;
+
+            if (theme == ElementTheme.Default)
+            {
+                var uiSettings = new UISettings();
+                var background = uiSettings.GetColorValue(UIColorType.Background);
+
+                theme = background == Colors.White ? ElementTheme.Light : ElementTheme.Dark;
+            }
+
+            if (theme == ElementTheme.Default)
+            {
+                theme = Application.Current.RequestedTheme == ApplicationTheme.Light ? ElementTheme.Light : ElementTheme.Dark;
+            }
+
+            window.AppWindow.TitleBar.ButtonForegroundColor = theme switch
+            {
+                ElementTheme.Dark => Colors.White,
+                ElementTheme.Light => Colors.Black,
+                _ => Colors.Transparent
+            };
+
+            window.AppWindow.TitleBar.ButtonHoverForegroundColor = theme switch
+            {
+                ElementTheme.Dark => Colors.White,
+                ElementTheme.Light => Colors.Black,
+                _ => Colors.Transparent
+            };
+
+            window.AppWindow.TitleBar.ButtonHoverBackgroundColor = theme switch
+            {
+                ElementTheme.Dark => Color.FromArgb(0x33, 0xFF, 0xFF, 0xFF),
+                ElementTheme.Light => Color.FromArgb(0x33, 0x00, 0x00, 0x00),
+                _ => Colors.Transparent
+            };
+
+            window.AppWindow.TitleBar.ButtonPressedBackgroundColor = theme switch
+            {
+                ElementTheme.Dark => Color.FromArgb(0x66, 0xFF, 0xFF, 0xFF),
+                ElementTheme.Light => Color.FromArgb(0x66, 0x00, 0x00, 0x00),
+                _ => Colors.Transparent
+            };
+
+            window.AppWindow.TitleBar.BackgroundColor = Colors.Transparent;
+
+            var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(window);
+            var active = GetActiveWindow();
+            if (hwnd == active)
+            {
+                SendMessage(hwnd, WMACTIVATE, WAINACTIVE, IntPtr.Zero);
+                SendMessage(hwnd, WMACTIVATE, WAACTIVE, IntPtr.Zero);
+            }
+            else
+            {
+                SendMessage(hwnd, WMACTIVATE, WAACTIVE, IntPtr.Zero);
+                SendMessage(hwnd, WMACTIVATE, WAINACTIVE, IntPtr.Zero);
+            }
+        }
+        catch
+        {
+            // ignore
+        }
+    }
+
     public static void ApplySystemThemeToCaptionButtons()
     {
         var frame = App.AppTitlebar as FrameworkElement;

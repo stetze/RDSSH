@@ -74,6 +74,19 @@ public partial class App : Application
         if (SessionsWindow == null)
         {
             SessionsWindow = new Views.SessionsHostWindow();
+            // Ensure the sessions window uses the currently selected theme
+            try
+            {
+                var themeSvc = GetService<Contracts.Services.IThemeSelectorService>();
+                if (SessionsWindow.Content is FrameworkElement fe)
+                {
+                    fe.RequestedTheme = themeSvc.Theme;
+                }
+            }
+            catch
+            {
+                // ignore if theme service isn't available yet
+            }
             SessionsWindow.Closed += (_, __) => SessionsWindow = null;
         }
 
