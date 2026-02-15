@@ -19,7 +19,7 @@ Alpha Version, not Everything works - still a lot to do.
 
 ---
 
-## Comminh soon to the Microsoft Store
+## Comming soon to the Microsoft Store
 <a href="https://apps.microsoft.com/detail/9nlqv1vwwclc?mode=direct">
   <img src="https://get.microsoft.com/images/en-us%20dark.svg" width="200"/>
 </a>
