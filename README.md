@@ -15,10 +15,11 @@ Made with <a href="https://github.com/microsoft/TemplateStudio">Microsoft Templa
 
 ## A lightweight RDS and SSH client.
 
+Alpha Version, not Everything works - still a lot to do.
+
 ---
 
-## Available on Microsoft Store
-
+## Comminh soon to the Microsoft Store
 <a href="https://apps.microsoft.com/detail/9nlqv1vwwclc?mode=direct">
   <img src="https://get.microsoft.com/images/en-us%20dark.svg" width="200"/>
 </a>
