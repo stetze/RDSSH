@@ -24,3 +24,13 @@ Made with <a href="https://github.com/microsoft/TemplateStudio">Microsoft Templa
 </a>
 
 or installation via winget:
+
+---
+
+<!-- MARKDOWN LINKS & IMAGES -->
+<!-- https://www.markdownguide.org/basic-syntax/#reference-style-links -->
+
+[stars-shield]: https://img.shields.io/github/stars/stetze/RDSSH.svg?style=for-the-badge
+[stars-url]: https://github.com/stetze/RDSSH/stargazers
+[license-shield]: https://img.shields.io/github/license/stetze/RDSSH.svg?style=for-the-badge
+[license-url]: https://github.com/stetze/RDSSH/blob/master/LICENSE.txt
