@@ -1,9 +1,11 @@
-[![Stargazers][stars-shield]][stars-url]
+[![Stargazers][stars-shield]][stars-url]  
 [![MIT License][license-shield]][license-url]
 
 <h1 align="center">
   <br>
-  <a href="https://github.com/stetze/RDSSH"><img src="RDSSH/Assets/Wide310x150Logo.scale-100.png" alt="Logo" ="200"></a>
+  <a href="https://github.com/stetze/RDSSH">
+    <img src="RDSSH/Assets/Wide310x150Logo.scale-100.png" alt="Logo" width="200">
+  </a>
   <br>
   RDSSH
   <br>
@@ -13,15 +15,18 @@ Made with <a href="https://github.com/microsoft/TemplateStudio">Microsoft Templa
 
 ## A lightweight RDS and SSH client.
 
+Alpha Version, not Everything works - still a lot to do.
 
-```
-## Available on msstore
-<!-- display an HTML-only app badge. Useful when you can't execute JS, such as in Github markdown pages -->
+---
+
+## Comming soon to the Microsoft Store
 <a href="https://apps.microsoft.com/detail/9nlqv1vwwclc?mode=direct">
-	<img src="https://get.microsoft.com/images/en-us%20dark.svg" width="200"/>
+  <img src="https://get.microsoft.com/images/en-us%20dark.svg" width="200"/>
 </a>
 
-or installation via winget "winget install 9NLQV1VWWCLC -s msstore"
+or installation via winget:
+
+---
 
 <!-- MARKDOWN LINKS & IMAGES -->
 <!-- https://www.markdownguide.org/basic-syntax/#reference-style-links -->
