@@ -1,9 +1,11 @@
 ﻿using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using RDSSH.Controls;
+using RDSSH.Controls.Rdp.Msrdp;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.IO;
 using System.Runtime.InteropServices;
 using System.Threading.Tasks;
 using WinRT.Interop;
@@ -14,14 +16,16 @@ namespace RDSSH.Views
     {
         public static SessionsHostWindow? Current { get; private set; }
 
+        // ✅ Mehrere Fenster (Undock) -> Current reicht nicht. Deshalb Registry.
+        private static readonly object _instancesLock = new();
+        private static readonly List<WeakReference<SessionsHostWindow>> _instances = new();
+
         private readonly Dictionary<long, TabViewItem> _tabsByChildHwnd = new();
+        private readonly Dictionary<long, MsRdpActiveXSession> _sessionsByChildHwnd = new();
+
         private readonly Dictionary<TabViewItem, Windows.Foundation.Point> _tabPointerStart = new();
-        private TabViewItem? _pendingDragTab;
-        private Windows.Foundation.Point _pendingDragStart;
-        private bool _dragStarted;
         private bool _isClosing;
 
-        // Observable collection hooks for TabItems
         private Windows.Foundation.Collections.IObservableVector<object>? _observableVector;
         private Windows.Foundation.Collections.VectorChangedEventHandler<object>? _vectorHandler;
         private System.Collections.Specialized.INotifyCollectionChanged? _inccRef;
@@ -29,21 +33,31 @@ namespace RDSSH.Views
         public SessionsHostWindow()
         {
             Current = this;
+
+            lock (_instancesLock)
+            {
+                _instances.Add(new WeakReference<SessionsHostWindow>(this));
+                CleanupDeadInstances_NoLock();
+            }
+
             InitializeComponent();
+
             AppWindow.SetIcon(Path.Combine(AppContext.BaseDirectory, "Assets/WindowIcon.ico"));
-            // Extend content into title bar so we can hide the default caption
             this.ExtendsContentIntoTitleBar = true;
-            // Apply title bar styling for sessions window
+
             try
             {
                 var themeSvc = App.GetService<Contracts.Services.IThemeSelectorService>();
                 RDSSH.Helpers.TitleBarHelper.UpdateTitleBar(this, themeSvc.Theme);
             }
             catch { }
+
             this.Closed += SessionsHostWindow_Closed;
             this.Activated += SessionsHostWindow_Activated;
 
-            // Ensure the title bar element is registered once the visual tree is loaded
+            // ✅ wenn Tab ausgewählt wird: Host refreshen (das ersetzt “Tabwechsel zeigt erst Bild”)
+            SessionsTabView.SelectionChanged += SessionsTabView_SelectionChanged;
+
             try
             {
                 if (this.Content is FrameworkElement fe)
@@ -52,19 +66,17 @@ namespace RDSSH.Views
                     {
                         try
                         {
-                            // register overlay as title bar
                             if (fe.FindName("DragOverlay") is UIElement overlay)
                             {
                                 App.AppTitlebar = overlay;
                                 this.SetTitleBar(overlay);
                             }
 
-                            // hook events to update overlay position (use named handlers so we can unsubscribe)
                             SessionsTabView.SizeChanged += SessionsTabView_SizeChanged;
                             SessionsTabView.LayoutUpdated += SessionsTabView_LayoutUpdated;
+
                             try
                             {
-                                // try attach to WinRT IObservableVector<T>
                                 if (SessionsTabView.TabItems is Windows.Foundation.Collections.IObservableVector<object> vec)
                                 {
                                     _observableVector = vec;
@@ -78,11 +90,74 @@ namespace RDSSH.Views
                                 }
                             }
                             catch { }
+
                             UpdateDragOverlay();
                         }
                         catch { }
                     };
                 }
+            }
+            catch { }
+        }
+
+        private static void CleanupDeadInstances_NoLock()
+        {
+            for (int i = _instances.Count - 1; i >= 0; i--)
+            {
+                if (!_instances[i].TryGetTarget(out _))
+                    _instances.RemoveAt(i);
+            }
+        }
+
+        // ✅ Global close: finde das richtige SessionsHostWindow
+        public static bool TryCloseTabByChildHwndGlobal(IntPtr childHwnd)
+        {
+            if (childHwnd == IntPtr.Zero) return false;
+            long key = childHwnd.ToInt64();
+
+            lock (_instancesLock)
+            {
+                CleanupDeadInstances_NoLock();
+
+                foreach (var wr in _instances)
+                {
+                    if (!wr.TryGetTarget(out var wnd)) continue;
+                    if (wnd._tabsByChildHwnd.ContainsKey(key))
+                    {
+                        wnd.CloseTabByChildHwnd(childHwnd);
+                        return true;
+                    }
+                }
+            }
+            return false;
+        }
+
+        // ✅ Wird vom Launcher aufgerufen, sobald Session existiert
+        public void RegisterSessionForChildHwnd(IntPtr childHwnd, MsRdpActiveXSession session)
+        {
+            if (childHwnd == IntPtr.Zero || session == null) return;
+            _sessionsByChildHwnd[childHwnd.ToInt64()] = session;
+        }
+
+        private void SessionsTabView_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            try
+            {
+                // Beim Auswählen sofort bounds/refresh -> sofort Bild nach Redock
+                DispatcherQueue.TryEnqueue(() =>
+                {
+                    try
+                    {
+                        if (SessionsTabView.SelectedItem is TabViewItem tvi &&
+                            tvi.Content is Grid grid &&
+                            grid.Children.Count > 0 &&
+                            grid.Children[0] is NativeChildHwndHost host)
+                        {
+                            host.ForceRefresh();
+                        }
+                    }
+                    catch { }
+                });
             }
             catch { }
         }
@@ -105,11 +180,13 @@ namespace RDSSH.Views
         private void SessionsHostWindow_Closed(object? sender, WindowEventArgs e)
         {
             _isClosing = true;
+
             try
             {
-                // detach handlers
+                SessionsTabView.SelectionChanged -= SessionsTabView_SelectionChanged;
                 SessionsTabView.SizeChanged -= SessionsTabView_SizeChanged;
                 SessionsTabView.LayoutUpdated -= SessionsTabView_LayoutUpdated;
+
                 if (_observableVector != null && _vectorHandler != null)
                 {
                     try { _observableVector.VectorChanged -= _vectorHandler; } catch { }
@@ -120,6 +197,11 @@ namespace RDSSH.Views
                 }
             }
             catch { }
+
+            lock (_instancesLock)
+            {
+                CleanupDeadInstances_NoLock();
+            }
         }
 
         private void SessionsTabView_SizeChanged(object? sender, SizeChangedEventArgs e) => UpdateDragOverlay();
@@ -130,14 +212,12 @@ namespace RDSSH.Views
         {
             try
             {
-                // EARLY RETURN: avoid enqueueing work for windows that are already closing
                 if (_isClosing) return;
 
                 DispatcherQueue.TryEnqueue(() =>
                 {
                     try
                     {
-                        // Re-check closing state inside the callback to avoid race after enqueue
                         if (_isClosing) return;
 
                         if (this.Content is not FrameworkElement fe) return;
@@ -151,7 +231,6 @@ namespace RDSSH.Views
                             {
                                 try
                                 {
-                                    // transform header position relative to SessionsTabView
                                     var transform = tvi.TransformToVisual(SessionsTabView);
                                     var pt = transform.TransformPoint(new Windows.Foundation.Point(0, 0));
                                     double right = pt.X + tvi.ActualWidth;
@@ -161,21 +240,19 @@ namespace RDSSH.Views
                             }
                         }
 
-                        // fallback if no tabs found
                         double left = maxRight > 0 ? Math.Ceiling(maxRight) + 8 : 44;
 
-                        // ensure within bounds
                         if (left < 0) left = 0;
                         if (left > SessionsTabView.ActualWidth - 24) left = Math.Max(0, SessionsTabView.ActualWidth - 24);
 
                         overlay.Margin = new Thickness(left, 0, 0, 0);
                         overlay.Width = Math.Max(24, SessionsTabView.ActualWidth - left);
-                        // register as titlebar in case it changed
+
                         try { App.AppTitlebar = overlay; this.SetTitleBar(overlay); } catch { }
                     }
                     catch (System.Runtime.InteropServices.COMException)
                     {
-                        // WinUI Desktop Window object already closed / invalid operation id. Safe to ignore.
+                        // closing
                     }
                     catch (Exception ex)
                     {
@@ -191,11 +268,42 @@ namespace RDSSH.Views
 
         public NativeChildHwndHost AddRdpTab(string title)
         {
-            // WICHTIG: F�r den Zustand "Passwortabfrage kommt" verwenden wir das klassische Control:
-            // MsTscAx.MsTscAx
             var host = new NativeChildHwndHost("MsTscAx.MsTscAx")
             {
                 HostWindow = this
+            };
+
+            host.BoundsUpdated += (_, __) =>
+            {
+                try
+                {
+                    var child = host.ChildHwnd;
+                    if (child == IntPtr.Zero) return;
+
+                    if (!_sessionsByChildHwnd.TryGetValue(child.ToInt64(), out var session))
+                        return;
+
+                    // ✅ nur wenn verbunden (sonst knallt es gern in COM/Reflection)
+                    if (!session.IsConnected) return;
+
+                    var wnd = host.HostWindow;
+                    if (wnd == null) return;
+
+                    var hwnd = WindowNative.GetWindowHandle(wnd);
+                    if (hwnd == IntPtr.Zero) return;
+
+                    uint dpi = GetDpiForWindow(hwnd);
+                    double scale = dpi / 96.0;
+
+                    int w = (int)Math.Max(1, Math.Round(host.ActualWidth * scale));
+                    int h = (int)Math.Max(1, Math.Round(host.ActualHeight * scale));
+
+                    session.UpdateDisplay(w, h);
+                }
+                catch (Exception ex)
+                {
+                    Debug.WriteLine($"[SessionsHostWindow] UpdateDisplay via BoundsUpdated failed: {ex}");
+                }
             };
 
             var container = new Grid
@@ -214,9 +322,7 @@ namespace RDSSH.Views
             SessionsTabView.TabItems.Add(tab);
             SessionsTabView.SelectedItem = tab;
 
-            // allow double-tap on tab header to toggle dock/undock
             tab.DoubleTapped += Tab_DoubleTapped;
-            // pointer handlers to implement drag-to-undock
             tab.PointerPressed += (s, e) =>
             {
                 try
@@ -236,13 +342,11 @@ namespace RDSSH.Views
                     var dx = p.X - start.X;
                     var dy = p.Y - start.Y;
                     var distSq = dx * dx + dy * dy;
-                    const double threshold = 12.0; // pixels
+                    const double threshold = 12.0;
                     if (distSq > threshold * threshold)
                     {
-                        // start undock
                         if (s is TabViewItem t)
                         {
-                            // remove stored start to avoid repeated undock
                             _tabPointerStart.Remove(t);
                             UndockTab(t);
                         }
@@ -259,6 +363,12 @@ namespace RDSSH.Views
                 var key = hwnd.ToInt64();
                 tab.Tag = key;
                 _tabsByChildHwnd[key] = tab;
+
+                // ✅ Direkt nach Erstellung einmal refreshen
+                DispatcherQueue.TryEnqueue(() =>
+                {
+                    try { host.ForceRefresh(); } catch { }
+                });
             };
 
             return host;
@@ -270,15 +380,13 @@ namespace RDSSH.Views
             {
                 if (sender is not TabViewItem tab) return;
 
-                var main = App.SessionsWindow; // do not create new main window here
+                var main = App.SessionsWindow;
                 if (main != null && ReferenceEquals(this, main))
                 {
-                    // undock into new window
                     UndockTab(tab);
                 }
                 else
                 {
-                    // dock back to main window (create if necessary)
                     var target = App.GetOrCreateSessionsWindow();
                     if (!ReferenceEquals(this, target))
                     {
@@ -291,12 +399,6 @@ namespace RDSSH.Views
 
         private void UndockTab(TabViewItem tab)
         {
-            // mark drag started to prevent immediate retargeting when new window activates
-            _dragStarted = true;
-            _pendingDragTab = tab;
-            _pendingDragStart = new Windows.Foundation.Point(0,0);
-            try { DispatcherQueue.TryEnqueue(async () => { await Task.Delay(50); _dragStarted = false; }); } catch { }
-
             try
             {
                 if (tab == null) return;
@@ -304,13 +406,10 @@ namespace RDSSH.Views
                 if (grid.Children.Count == 0) return;
                 if (grid.Children[0] is not NativeChildHwndHost host) return;
 
-                // remove from current window
                 SessionsTabView.TabItems.Remove(tab);
                 _tabsByChildHwnd.Remove(host.ChildHwnd.ToInt64());
 
-                // create new window and move host
                 var wnd = new SessionsHostWindow();
-                // ensure new window uses current app theme
                 try
                 {
                     var themeSvc = App.GetService<Contracts.Services.IThemeSelectorService>();
@@ -319,16 +418,16 @@ namespace RDSSH.Views
                     RDSSH.Helpers.TitleBarHelper.UpdateTitleBar(wnd, themeSvc.Theme);
                 }
                 catch { }
+
                 wnd.Activate();
                 wnd.BringToFront();
 
-                // detach host from old parent and attach to new container
                 grid.Children.Remove(host);
                 var newContainer = new Grid { HorizontalAlignment = HorizontalAlignment.Stretch, VerticalAlignment = VerticalAlignment.Stretch };
                 newContainer.Children.Add(host);
 
                 host.HostWindow = wnd;
-                host.ReparentTo(WinRT.Interop.WindowNative.GetWindowHandle(wnd));
+                host.ReparentTo(WindowNative.GetWindowHandle(wnd));
 
                 var newTab = new TabViewItem { Header = tab.Header, Content = newContainer };
                 newTab.DoubleTapped += wnd.Tab_DoubleTapped;
@@ -336,10 +435,14 @@ namespace RDSSH.Views
                 wnd.SessionsTabView.SelectedItem = newTab;
                 wnd.RegisterExistingTab(newTab, host);
 
-                // if the original window is now empty, close it to avoid orphan empty windows
+                // ✅ Undock refresh
+                wnd.DispatcherQueue.TryEnqueue(() =>
+                {
+                    try { host.ForceRefresh(); } catch { }
+                });
+
                 try
                 {
-                    // only auto-close if this is not the app's main sessions window
                     if (!ReferenceEquals(this, App.SessionsWindow) && this.SessionsTabView.TabItems.Count == 0 && !this._isClosing)
                     {
                         this._isClosing = true;
@@ -363,18 +466,16 @@ namespace RDSSH.Views
                 if (grid.Children.Count == 0) return;
                 if (grid.Children[0] is not NativeChildHwndHost host) return;
 
-                // remove from source window
                 if (ReferenceEquals(this, target)) return;
                 SessionsTabView.TabItems.Remove(tab);
                 _tabsByChildHwnd.Remove(host.ChildHwnd.ToInt64());
 
-                // move to target
                 grid.Children.Remove(host);
                 var newContainer = new Grid { HorizontalAlignment = HorizontalAlignment.Stretch, VerticalAlignment = VerticalAlignment.Stretch };
                 newContainer.Children.Add(host);
 
                 host.HostWindow = target;
-                host.ReparentTo(WinRT.Interop.WindowNative.GetWindowHandle(target));
+                host.ReparentTo(WindowNative.GetWindowHandle(target));
 
                 var newTab = new TabViewItem { Header = tab.Header, Content = newContainer };
                 newTab.DoubleTapped += target.Tab_DoubleTapped;
@@ -382,7 +483,13 @@ namespace RDSSH.Views
                 target.SessionsTabView.SelectedItem = newTab;
                 target.RegisterExistingTab(newTab, host);
                 target.BringToFront();
-                // ensure target uses theme
+
+                // ✅ Dock refresh
+                target.DispatcherQueue.TryEnqueue(() =>
+                {
+                    try { host.ForceRefresh(); } catch { }
+                });
+
                 try
                 {
                     var themeSvc = App.GetService<Contracts.Services.IThemeSelectorService>();
@@ -400,7 +507,6 @@ namespace RDSSH.Views
             {
                 try
                 {
-                    // if source window is now empty and it's not the app's main sessions window, close it
                     if (!ReferenceEquals(this, App.SessionsWindow) && this.SessionsTabView.TabItems.Count == 0 && !this._isClosing)
                     {
                         this._isClosing = true;
@@ -411,7 +517,6 @@ namespace RDSSH.Views
             }
         }
 
-        // Register an existing tab that already contains a hosted child hwnd
         public void RegisterExistingTab(TabViewItem tab, NativeChildHwndHost host)
         {
             try
@@ -432,6 +537,9 @@ namespace RDSSH.Views
         [DllImport("user32.dll")] static extern bool BringWindowToTop(IntPtr hWnd);
         [DllImport("user32.dll")] static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
         [DllImport("user32.dll")] static extern bool SetForegroundWindow(IntPtr hWnd);
+
+        [DllImport("user32.dll", SetLastError = true)]
+        private static extern uint GetDpiForWindow(IntPtr hwnd);
 
         private const int SW_SHOW = 5;
         private const int SW_RESTORE = 9;
@@ -460,7 +568,6 @@ namespace RDSSH.Views
             }
         }
 
-
         public void CloseTabByChildHwnd(IntPtr childHwnd)
         {
             DispatcherQueue.TryEnqueue(() =>
@@ -471,7 +578,6 @@ namespace RDSSH.Views
             });
         }
 
-
         public void FocusTabByChildHwnd(IntPtr childHwnd)
         {
             DispatcherQueue.TryEnqueue(() =>
@@ -480,51 +586,30 @@ namespace RDSSH.Views
                 if (_tabsByChildHwnd.TryGetValue(key, out var tab))
                 {
                     SessionsTabView.SelectedItem = tab;
+                    // sofort refreshen
+                    try
+                    {
+                        if (tab.Content is Grid grid && grid.Children.Count > 0 && grid.Children[0] is NativeChildHwndHost host)
+                            host.ForceRefresh();
+                    }
+                    catch { }
                 }
             });
         }
 
         private void CloseHostWindowIfEmpty()
-
-
         {
-
-
             try
-
-
             {
-
-
-                if (_isClosing)
-
-
-                    return;
-
-
+                if (_isClosing) return;
                 if (SessionsTabView != null && SessionsTabView.TabItems.Count == 0)
-
-
                 {
-
-
                     _isClosing = true;
-
-
                     this.Close();
-
-
                 }
-
-
             }
-
             catch { }
-
-
         }
-
-
 
         private void CloseTabInternal(TabViewItem tab)
         {
@@ -532,15 +617,28 @@ namespace RDSSH.Views
 
             if (tab.Content is Grid grid && grid.Children.Count > 0 && grid.Children[0] is NativeChildHwndHost host)
             {
-                _tabsByChildHwnd.Remove(host.ChildHwnd.ToInt64());
-                host.Dispose();
+                var key = host.ChildHwnd.ToInt64();
+                _tabsByChildHwnd.Remove(key);
+
+                if (_sessionsByChildHwnd.TryGetValue(key, out var session))
+                {
+                    try { session.Dispose(); } catch { }
+                    _sessionsByChildHwnd.Remove(key);
+                }
+
+                try { host.Dispose(); } catch { }
             }
             else if (tab.Tag is long hwnd)
             {
                 _tabsByChildHwnd.Remove(hwnd);
+
+                if (_sessionsByChildHwnd.TryGetValue(hwnd, out var session))
+                {
+                    try { session.Dispose(); } catch { }
+                    _sessionsByChildHwnd.Remove(hwnd);
+                }
             }
 
-            // Wenn keine Tabs mehr vorhanden sind, Host-Window sauber schließen.
             CloseHostWindowIfEmpty();
         }
 

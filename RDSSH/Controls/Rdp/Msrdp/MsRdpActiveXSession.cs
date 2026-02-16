@@ -100,11 +100,10 @@ namespace RDSSH.Controls.Rdp.Msrdp
                 object? sec = GetBestSecuredSettings(_ax);
                 if (sec != null)
                 {
-                    // 1 = immer Remote
                     TrySet(sec, "KeyboardHookMode", 1);
                 }
 
-                bool effectivePrompt = hasPassword ? promptForCreds : promptForCreds;
+                bool effectivePrompt = promptForCreds;
                 TrySet(_ax, "PromptForCredentials", effectivePrompt);
 
                 if (hasPassword && !effectivePrompt)
@@ -122,6 +121,12 @@ namespace RDSSH.Controls.Rdp.Msrdp
             catch (COMException ex)
             {
                 Debug.WriteLine($"[MsRdpActiveXSession] COMException in Connect: 0x{ex.HResult:X8} {ex}");
+                try { Call(_ax, "Disconnect"); } catch { }
+                _connected = false;
+            }
+            catch (TargetInvocationException tie)
+            {
+                Debug.WriteLine($"[MsRdpActiveXSession] TargetInvocationException in Connect: {tie.InnerException?.Message ?? tie.Message}");
                 try { Call(_ax, "Disconnect"); } catch { }
                 _connected = false;
             }
@@ -143,16 +148,25 @@ namespace RDSSH.Controls.Rdp.Msrdp
                 Call(_ax, "UpdateSessionDisplaySettings",
                     (uint)width, (uint)height, (uint)width, (uint)height,
                     (uint)0, (uint)100, (uint)100);
+
                 Debug.WriteLine($"[MsRdpActiveXSession] UpdateSessionDisplaySettings({width}x{height})");
                 return;
+            }
+            catch (TargetInvocationException tie)
+            {
+                Debug.WriteLine($"[MsRdpActiveXSession] UpdateSessionDisplaySettings failed: {tie.InnerException?.Message ?? tie.Message}");
             }
             catch (Exception ex)
             {
                 Debug.WriteLine($"[MsRdpActiveXSession] UpdateSessionDisplaySettings failed: {ex.Message}");
             }
 
-            TrySet(_ax, "DesktopWidth", width);
-            TrySet(_ax, "DesktopHeight", height);
+            try
+            {
+                TrySet(_ax, "DesktopWidth", width);
+                TrySet(_ax, "DesktopHeight", height);
+            }
+            catch { }
         }
 
         public void Disconnect()
@@ -238,12 +252,28 @@ namespace RDSSH.Controls.Rdp.Msrdp
             {
                 _onDisconnectedHandler = reason =>
                 {
-                    RunOnOwnerThread(() =>
+                    // Wichtig: KEINE Exceptions nach außen. Sonst COM -> TargetInvocationException und dein Cleanup läuft nicht.
+                    try
                     {
-                        _connected = false;
-                        try { Debug.WriteLine($"[MsRdpActiveXSession] OnDisconnected({reason})"); } catch { }
-                        Disconnected?.Invoke(this, reason);
-                    }, wait: false);
+                        RunOnOwnerThread(() =>
+                        {
+                            _connected = false;
+                            try { Debug.WriteLine($"[MsRdpActiveXSession] OnDisconnected({reason})"); } catch { }
+
+                            try
+                            {
+                                Disconnected?.Invoke(this, reason);
+                            }
+                            catch (Exception ex)
+                            {
+                                Debug.WriteLine($"[MsRdpActiveXSession] Disconnected subscriber threw: {ex}");
+                            }
+                        }, wait: false);
+                    }
+                    catch (Exception ex)
+                    {
+                        Debug.WriteLine($"[MsRdpActiveXSession] OnDisconnected internal error: {ex}");
+                    }
                 };
 
                 ComEventsHelper.Combine(_ax, IMsTscAxEvents_Iid, DISPID_OnDisconnected, _onDisconnectedHandler);
@@ -324,7 +354,7 @@ namespace RDSSH.Controls.Rdp.Msrdp
                 if (ax is IMsRdpClientNonScriptable2 ns2) { ns2.put_ClearTextPassword(password); return; }
                 if (ax is IMsRdpClientNonScriptable ns1) { ns1.put_ClearTextPassword(password); return; }
             }
-            catch { /* nie Passwort loggen */ }
+            catch { }
         }
 
         private static void TryResetNonScriptablePassword(object ax)

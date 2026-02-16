@@ -58,7 +58,54 @@ namespace RDSSH.Controls
 
             SetParent(_childHwnd, newTopLevelHwnd);
             _topLevelHwnd = newTopLevelHwnd;
-            UpdateBounds();
+
+            // Nach SetParent fehlen oft WM_SIZE/Redraw -> erzwingen
+            DispatcherQueue.TryEnqueue(() =>
+            {
+                try
+                {
+                    Show();
+                    ForceRefresh();
+                }
+                catch { }
+            });
+
+            // nochmal leicht verzögert, weil WinUI Layout/TabView gern später finalized
+            _ = Task.Run(async () =>
+            {
+                await Task.Delay(60);
+                try
+                {
+                    DispatcherQueue.TryEnqueue(() =>
+                    {
+                        try { ForceRefresh(); } catch { }
+                    });
+                }
+                catch { }
+            });
+        }
+
+        public void ForceRefresh()
+        {
+            if (_disposed) return;
+            if (_childHwnd == IntPtr.Zero) return;
+
+            try
+            {
+                ShowWindow(_childHwnd, SW_SHOW);
+
+                UpdateBounds();
+
+                // Hard redraw – das ist der “Tabwechsel/Resize”-Ersatz
+                RedrawWindow(
+                    _childHwnd,
+                    IntPtr.Zero,
+                    IntPtr.Zero,
+                    RDW_INVALIDATE | RDW_UPDATENOW | RDW_ALLCHILDREN | RDW_ERASE);
+
+                UpdateWindow(_childHwnd);
+            }
+            catch { }
         }
 
         private void OnPointerPressed(object sender, PointerRoutedEventArgs e)
@@ -68,14 +115,11 @@ namespace RDSSH.Controls
 
             try
             {
-                // sicherstellen, dass unser Fenster Eingabe bekommt
                 if (_topLevelHwnd != IntPtr.Zero)
                     SetForegroundWindow(_topLevelHwnd);
 
-                // Fokus auf AtlAxWin
                 SetFocus(_childHwnd);
 
-                // Fokus auf inneres Child (RDP render window)
                 var inner = FindWindowEx(_childHwnd, IntPtr.Zero, null, null);
                 if (inner != IntPtr.Zero)
                     SetFocus(inner);
@@ -111,8 +155,22 @@ namespace RDSSH.Controls
 
             EnsureChildWindow();
 
+            // Mehrfach anstoßen, weil TabView/Layout oft später “settled”
             DispatcherQueue.TryEnqueue(UpdateBounds);
             DispatcherQueue.TryEnqueue(UpdateBounds);
+
+            _ = Task.Run(async () =>
+            {
+                await Task.Delay(80);
+                try
+                {
+                    DispatcherQueue.TryEnqueue(() =>
+                    {
+                        try { ForceRefresh(); } catch { }
+                    });
+                }
+                catch { }
+            });
         }
 
         private void OnUnloaded(object sender, RoutedEventArgs e)
@@ -192,7 +250,13 @@ namespace RDSSH.Controls
                     x, y, w, h,
                     SWP_NOACTIVATE | SWP_SHOWWINDOW);
 
+                // Wichtig: nach Reparent/Tab-Wechsel explizit invalidieren und redraw
                 InvalidateRect(_childHwnd, IntPtr.Zero, true);
+                RedrawWindow(
+                    _childHwnd,
+                    IntPtr.Zero,
+                    IntPtr.Zero,
+                    RDW_INVALIDATE | RDW_ALLCHILDREN | RDW_UPDATENOW);
 
                 BoundsUpdated?.Invoke(this, EventArgs.Empty);
             }
@@ -291,6 +355,18 @@ namespace RDSSH.Controls
             _ = GetClassName(hwnd, sb, sb.Capacity);
             return sb.ToString();
         }
+
+        // RedrawWindow / UpdateWindow
+        private const uint RDW_INVALIDATE = 0x0001;
+        private const uint RDW_ERASE = 0x0004;
+        private const uint RDW_UPDATENOW = 0x0100;
+        private const uint RDW_ALLCHILDREN = 0x0080;
+
+        [DllImport("user32.dll")]
+        private static extern bool RedrawWindow(IntPtr hWnd, IntPtr lprcUpdate, IntPtr hrgnUpdate, uint flags);
+
+        [DllImport("user32.dll")]
+        private static extern bool UpdateWindow(IntPtr hWnd);
 
         private static bool _atlInitialized;
 

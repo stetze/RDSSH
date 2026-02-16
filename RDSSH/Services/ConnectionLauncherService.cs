@@ -68,14 +68,37 @@ namespace RDSSH.Services
         {
             try
             {
-                var sessionsWindow = App.GetOrCreateSessionsWindow();
-                sessionsWindow.BringToFront();
-                sessionsWindow.FocusTabByChildHwnd(session.ChildHwnd);
+                // ✅ Multi-window: versuche global zu fokussieren
+                // (Fallback: SessionsWindow)
+                if (!TryFocusTabGlobal(session.ChildHwnd))
+                {
+                    var sessionsWindow = App.GetOrCreateSessionsWindow();
+                    sessionsWindow.BringToFront();
+                    sessionsWindow.FocusTabByChildHwnd(session.ChildHwnd);
+                }
             }
             catch (Exception ex)
             {
                 Debug.WriteLine($"[ConnectionLauncherService] FocusExistingRdpTab failed: {ex}");
             }
+        }
+
+        private bool TryFocusTabGlobal(IntPtr childHwnd)
+        {
+            try
+            {
+                // minimal: schließe/öffne nicht, nur fokus via global close-heuristik möglich
+                // Wir haben (noch) keine globale Focus API, daher: best-effort über Current
+                var cur = SessionsHostWindow.Current;
+                if (cur != null)
+                {
+                    cur.BringToFront();
+                    cur.FocusTabByChildHwnd(childHwnd);
+                    return true;
+                }
+            }
+            catch { }
+            return false;
         }
 
         private async Task StartRdpInternalAsync(HostlistModel connection)
@@ -84,7 +107,7 @@ namespace RDSSH.Services
             {
                 connection.IsConnected = true;
 
-                var host = (connection.Hostname ?? string.Empty).Trim(); // Broker-FQDN
+                var host = (connection.Hostname ?? string.Empty).Trim();
                 var userFromConnection = (connection.Username ?? string.Empty).Trim();
                 var domainFromConnection = (connection.Domain ?? string.Empty).Trim();
 
@@ -142,38 +165,51 @@ namespace RDSSH.Services
 
                 var dispatcher = sessionsWindow.DispatcherQueue;
 
-                // --- ActiveX auf UI-Thread erzeugen (STA) ---
                 MsRdpActiveXSession ax = null!;
                 await EnqueueAsync(dispatcher, () =>
                 {
                     ax = new MsRdpActiveXSession();
                     ax.Initialize(childHwnd);
 
-                    ax.Disconnected += (_, __) =>
-                    {
-                        _ = dispatcher.TryEnqueue(() =>
-                        {
-                            try
-                            {
-                                if (connection.ConnectionId != Guid.Empty &&
-                                    _activeRdpById.TryGetValue(connection.ConnectionId, out var active) &&
-                                    active.ChildHwnd == childHwnd)
-                                {
-                                    _activeRdpById.Remove(connection.ConnectionId);
-                                }
+                    // ✅ wichtig: Session im Fenster registrieren (für Resize + sauberes Dispose)
+                    try { sessionsWindow.RegisterSessionForChildHwnd(childHwnd, ax); } catch { }
 
-                                SessionsHostWindow.Current?.CloseTabByChildHwnd(childHwnd);
-                                try { ax?.Dispose(); } catch { }
-                            }
-                            catch (Exception ex)
+                    ax.Disconnected += (_, reason) =>
+                    {
+                        // NIE Exceptions nach COM zurückwerfen
+                        try
+                        {
+                            _ = dispatcher.TryEnqueue(() =>
                             {
-                                Debug.WriteLine($"[ConnectionLauncherService] Auto-close tab failed: {ex}");
-                            }
-                            finally
-                            {
-                                connection.IsConnected = false;
-                            }
-                        });
+                                try
+                                {
+                                    if (connection.ConnectionId != Guid.Empty &&
+                                        _activeRdpById.TryGetValue(connection.ConnectionId, out var active) &&
+                                        active.ChildHwnd == childHwnd)
+                                    {
+                                        _activeRdpById.Remove(connection.ConnectionId);
+                                    }
+
+                                    // ✅ Multi-window: global schließen
+                                    _ = SessionsHostWindow.TryCloseTabByChildHwndGlobal(childHwnd);
+
+                                    try { ax?.Dispose(); } catch { }
+                                }
+                                catch (Exception ex)
+                                {
+                                    Debug.WriteLine($"[ConnectionLauncherService] Auto-close tab failed: {ex}");
+                                }
+                                finally
+                                {
+                                    connection.IsConnected = false;
+                                }
+                            });
+                        }
+                        catch (Exception ex)
+                        {
+                            Debug.WriteLine($"[ConnectionLauncherService] Disconnected handler failed: {ex}");
+                            connection.IsConnected = false;
+                        }
                     };
                 });
 
@@ -201,7 +237,6 @@ namespace RDSSH.Services
                     catch { }
                 };
 
-                // Connect (UI-Thread)
                 await EnqueueAsync(dispatcher, () =>
                 {
                     session.Ax.Connect(
@@ -220,7 +255,6 @@ namespace RDSSH.Services
                     );
                 });
 
-                // Passwort leeren
                 pwd = string.Empty;
             }
             catch (Exception ex)
